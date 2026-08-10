@@ -251,6 +251,10 @@ detect_audio_server() {
 CHECK_BLOCKERS=0
 CHECK_WARNINGS=0
 
+# Set by write_runtime: "system" when a package already provides `wpe`,
+# "local" when a copy was placed in the user's bin directory.
+WPE_RUNTIME_SOURCE="local"
+
 run_check() {
     CHECK_BLOCKERS=0
     CHECK_WARNINGS=0
@@ -375,7 +379,24 @@ backup_targets() {
     done < <(available_plugins)
 }
 
-plugin_dir() { echo "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/plugins"; }
+# Where the bundled files live. Supports both running straight from a git
+# checkout and a packaged install, where the executable sits in /usr/bin while
+# its plugins and runtime live under /usr/share.
+resource_root() {
+    local self_dir d
+    self_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+
+    for d in "$self_dir" /usr/share/wpe-setup /usr/local/share/wpe-setup; do
+        if [ -d "$d/plugins" ] || [ -f "$d/lib/wpe" ]; then
+            echo "$d"
+            return 0
+        fi
+    done
+
+    echo "$self_dir"
+}
+
+plugin_dir() { echo "$(resource_root)/plugins"; }
 
 # Plugins that both exist and apply to this machine.
 available_plugins() {
@@ -516,11 +537,22 @@ SILENT=1
 SYNC_COLORS=$(command -v matugen >/dev/null 2>&1 && echo 1 || echo 0)
 EOF
 
-    # readlink -f, not a bare dirname: installing this script through a symlink
-    # in PATH would otherwise look for lib/ next to the link, not the source.
-    cp "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/wpe" "$BIN_DIR/wpe" 2>/dev/null \
-        || return 1
+    # When a distribution package already provides `wpe` system-wide, copying a
+    # second one into ~/.local/bin would shadow it and quietly go stale on the
+    # next upgrade. Only install the runtime when it is not already available.
+    local existing
+    existing="$(command -v wpe 2>/dev/null)"
+    if [ -n "$existing" ] && [ "$existing" != "$BIN_DIR/wpe" ]; then
+        WPE_RUNTIME_SOURCE="system"
+        return 0
+    fi
+
+    local bundled
+    bundled="$(resource_root)/lib/wpe"
+    [ -f "$bundled" ] || return 1
+    cp "$bundled" "$BIN_DIR/wpe" 2>/dev/null || return 1
     chmod +x "$BIN_DIR/wpe"
+    WPE_RUNTIME_SOURCE="local"
     return 0
 }
 
@@ -560,7 +592,11 @@ do_install() {
 
     head1 "Install"
     write_runtime || die "Install failed — run 'wpe-setup rollback'"
-    ok "Installed the 'wpe' command in $BIN_DIR"
+    if [ "$WPE_RUNTIME_SOURCE" = "system" ]; then
+        ok "Using the system-provided 'wpe' command"
+    else
+        ok "Installed the 'wpe' command in $BIN_DIR"
+    fi
     ok "Wrote configuration to $CONFIG_DIR/config"
 
     mkdir -p "$STATE_DIR"
@@ -571,11 +607,13 @@ BACKUP="$archive"
 COMPOSITOR="$(detect_compositor)"
 EOF
 
-    case ":$PATH:" in
-        *":$BIN_DIR:"*) ;;
-        *) warn "$BIN_DIR is not in your PATH"
-           info "Add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-    esac
+    if [ "$WPE_RUNTIME_SOURCE" != "system" ]; then
+        case ":$PATH:" in
+            *":$BIN_DIR:"*) ;;
+            *) warn "$BIN_DIR is not in your PATH"
+               info "Add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        esac
+    fi
 
     local plugins; plugins="$(available_plugins)"
     if [ -n "$plugins" ]; then

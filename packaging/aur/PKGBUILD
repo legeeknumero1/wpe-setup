@@ -1,0 +1,74 @@
+# Maintainer: legeeknumero1 <enzomaison20@gmail.com>
+
+pkgname=wpe-setup-git
+_pkgname=wpe-setup
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc="Set up Wallpaper Engine wallpapers on Linux in one command, with prerequisite checks, backup and rollback"
+arch=('any')
+url="https://github.com/legeeknumero1/wpe-setup"
+license=('MIT')
+
+# linux-wallpaperengine does the rendering; everything else is used for path
+# discovery and for reading Steam's own manifests.
+depends=(
+  'bash'
+  'jq'
+  'coreutils'
+  'findutils'
+  'gawk'
+  'sed'
+  'linux-wallpaperengine'
+)
+
+optdepends=(
+  'matugen: derive a colour scheme from a rendered frame of the wallpaper'
+  'python: required by the imperative-dots integration'
+  'imagemagick: parallel thumbnail generation for the imperative-dots integration'
+  'hyprland: output detection through hyprctl'
+  'sway: output detection through swaymsg'
+  'wlr-randr: output detection on other wlroots compositors'
+)
+
+makedepends=('git')
+checkdepends=('shellcheck')
+
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$_pkgname" || exit 1
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+check() {
+  cd "$srcdir/$_pkgname" || exit 1
+  # Same gate the project's CI enforces, so a broken tree never reaches a user.
+  shellcheck -s bash -S style wpe-setup.sh lib/wpe plugins/*.sh
+}
+
+package() {
+  cd "$srcdir/$_pkgname" || exit 1
+
+  # The runtime command users actually invoke day to day.
+  install -Dm755 lib/wpe "$pkgdir/usr/bin/wpe"
+
+  # The installer. wpe-setup resolves its bundled files through resource_root(),
+  # which looks under /usr/share/wpe-setup when it is not run from a checkout.
+  install -Dm755 wpe-setup.sh "$pkgdir/usr/bin/wpe-setup"
+
+  # Kept alongside the plugins so a user running `wpe-setup install` still has a
+  # copy to fall back on, even though the binary above normally wins.
+  install -Dm755 lib/wpe "$pkgdir/usr/share/$_pkgname/lib/wpe"
+
+  local plugin
+  for plugin in plugins/*.sh; do
+    install -Dm755 "$plugin" "$pkgdir/usr/share/$_pkgname/$plugin"
+  done
+
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$_pkgname/LICENSE"
+}
