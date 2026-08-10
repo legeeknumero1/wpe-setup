@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+#
+# wpe — drive linux-wallpaperengine on every connected output.
+#
+# --noautomute is MANDATORY on PipeWire systems. Without it the engine blocks
+# forever inside PulseAudioPlayingDetector's constructor: pa_mainloop_iterate()
+# never returns against pipewire-pulse. The engine still creates its layer
+# surface with correct geometry, so the failure looks like a rendering or
+# compositor bug, but it never even opens the wallpaper file. It is passed
+# unconditionally here because it costs nothing on PulseAudio.
+#
+# Part of wpe-setup — https://github.com/enzo/wpe-setup
+# License: MIT
+
+set -uo pipefail
+
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wpe"
+readonly CONFIG="$CONFIG_DIR/config"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/wpe"
+readonly FRAME="$STATE_DIR/current_frame.png"
+readonly ENGINE_LOG="$STATE_DIR/engine.log"
+readonly WE_APPID=431960
+
+WORKSHOP_DIR=""
+ASSETS_DIR=""
+WALLPAPER_ID=""
+FPS=30
+SCALING="fill"
+SILENT=1
+SYNC_COLORS=0
+MATUGEN_HOOK=""
+
+mkdir -p "$STATE_DIR" "$CONFIG_DIR"
+# shellcheck disable=SC1090
+[ -f "$CONFIG" ] && . "$CONFIG"
+
+err() { printf 'wpe: %s\n' "$1" >&2; }
+
+# ─── Path discovery (cached hints are verified, never trusted blindly) ────────
+
+steam_roots() {
+    local -a candidates=(
+        "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.steam/root"
+        "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
+        "$HOME/snap/steam/common/.local/share/Steam"
+    )
+    local -a roots=()
+    local c vdf extra root
+
+    for c in "${candidates[@]}"; do
+        [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
+    done
+    for root in "${roots[@]}"; do
+        vdf="$root/steamapps/libraryfolders.vdf"
+        [ -f "$vdf" ] || continue
+        while IFS= read -r extra; do
+            [ -n "$extra" ] && [ -d "$extra/steamapps" ] && roots+=("$(readlink -f "$extra")")
+        done < <(grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null)
+    done
+    printf '%s\n' "${roots[@]}" | awk 'NF && !seen[$0]++'
+}
+
+resolve_paths() {
+    [ -d "${WORKSHOP_DIR:-}" ] || WORKSHOP_DIR=""
+    [ -d "${ASSETS_DIR:-}" ]   || ASSETS_DIR=""
+
+    local root
+    while IFS= read -r root; do
+        [ -z "$WORKSHOP_DIR" ] && [ -d "$root/steamapps/workshop/content/$WE_APPID" ] \
+            && WORKSHOP_DIR="$root/steamapps/workshop/content/$WE_APPID"
+        [ -z "$ASSETS_DIR" ] && [ -d "$root/steamapps/common/wallpaper_engine/assets" ] \
+            && ASSETS_DIR="$root/steamapps/common/wallpaper_engine/assets"
+    done < <(steam_roots)
+
+    [ -n "$WORKSHOP_DIR" ] || { err "contenu Workshop introuvable — Wallpaper Engine est-il installé ?"; return 1; }
+    return 0
+}
+
+outputs() {
+    if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
+        hyprctl monitors -j 2>/dev/null | jq -r '.[].name'
+    elif [ -n "${SWAYSOCK:-}" ] && command -v swaymsg >/dev/null 2>&1; then
+        swaymsg -t get_outputs -r 2>/dev/null | jq -r '.[].name'
+    elif command -v wlr-randr >/dev/null 2>&1; then
+        wlr-randr 2>/dev/null | grep -oP '^\S+'
+    elif command -v xrandr >/dev/null 2>&1; then
+        xrandr --query 2>/dev/null | awk '/ connected/{print $1}'
+    fi
+}
+
+save_config() {
+    cat > "$CONFIG" <<EOF
+# Written by wpe
+WORKSHOP_DIR="$WORKSHOP_DIR"
+ASSETS_DIR="$ASSETS_DIR"
+WALLPAPER_ID="$WALLPAPER_ID"
+FPS=$FPS
+SCALING="$SCALING"
+SILENT=$SILENT
+SYNC_COLORS=$SYNC_COLORS
+MATUGEN_HOOK="$MATUGEN_HOOK"
+EOF
+}
+
+# ─── Engine control ──────────────────────────────────────────────────────────
+
+stop() {
+    # Match the truncated comm name: pkill -f would also match this script.
+    pkill -x linux-wallpaper 2>/dev/null
+    sleep 0.3
+}
+
+start() {
+    resolve_paths || return 1
+
+    if [ -z "$WALLPAPER_ID" ]; then
+        err "aucun wallpaper choisi — essaie « wpe random » ou « wpe list »"
+        return 1
+    fi
+    if [ ! -d "$WORKSHOP_DIR/$WALLPAPER_ID" ]; then
+        err "wallpaper $WALLPAPER_ID introuvable"
+        return 1
+    fi
+
+    stop
+
+    local -a args=()
+    local out
+    while IFS= read -r out; do
+        [ -n "$out" ] && args+=(--screen-root "$out" --bg "$WALLPAPER_ID" --scaling "$SCALING")
+    done < <(outputs)
+
+    if [ ${#args[@]} -eq 0 ]; then
+        err "aucune sortie détectée — compositeur non supporté ?"
+        return 1
+    fi
+
+    [ -n "$ASSETS_DIR" ] && args+=(--assets-dir "$ASSETS_DIR")
+    [ "$SILENT" = "1" ] && args+=(--silent)
+
+    setsid "$(command -v linux-wallpaperengine)" \
+        "${args[@]}" \
+        --noautomute \
+        --fps "$FPS" \
+        --screenshot "$FRAME" \
+        --screenshot-delay 30 \
+        >"$ENGINE_LOG" 2>&1 </dev/null &
+
+    printf 'wallpaper %s appliqué\n' "$WALLPAPER_ID"
+}
+
+# Derive a colour scheme from a real rendered frame, so animated wallpapers
+# still drive the palette. Purely optional: skipped when matugen is absent.
+sync_colors() {
+    [ "$SYNC_COLORS" = "1" ] || return 0
+    command -v matugen >/dev/null 2>&1 || return 0
+
+    local i
+    for i in $(seq 1 40); do
+        [ -s "$FRAME" ] && break
+        sleep 0.5
+    done
+    [ -s "$FRAME" ] || { err "aucune frame capturée — couleurs inchangées"; return 1; }
+
+    matugen image "$FRAME" --source-color-index 0 >/dev/null 2>&1 || return 1
+    [ -n "$MATUGEN_HOOK" ] && [ -x "$MATUGEN_HOOK" ] && "$MATUGEN_HOOK"
+    printf 'couleurs synchronisées\n'
+}
+
+list() {
+    resolve_paths || return 1
+    local dir
+    for dir in "$WORKSHOP_DIR"/*/; do
+        [ -f "$dir/project.json" ] || continue
+        printf '%s\t%s\t%s\n' \
+            "$(basename "$dir")" \
+            "$(jq -r '.type // "?"' "$dir/project.json" 2>/dev/null)" \
+            "$(jq -r '.title // "?"' "$dir/project.json" 2>/dev/null)"
+    done
+}
+
+set_wallpaper() {
+    resolve_paths || return 1
+    [ -d "$WORKSHOP_DIR/$1" ] || { err "wallpaper $1 introuvable"; return 1; }
+    WALLPAPER_ID="$1"
+    save_config
+    start && sync_colors
+}
+
+# Keeps the engine alive and bound to the current outputs. Covers two failure
+# modes: the engine dying (nothing else would restart it), and the monitor
+# layout changing while it renders to a stale set of screens.
+watch_loop() {
+    local last="" current failures=0
+    while true; do
+        current="$(outputs | sort | tr '\n' ',')"
+        if ! pgrep -x linux-wallpaper >/dev/null 2>&1; then
+            if [ "$failures" -ge 5 ]; then sleep 60; failures=0; fi
+            start && sync_colors
+            failures=$((failures + 1))
+        elif [ -n "$last" ] && [ "$current" != "$last" ]; then
+            start && sync_colors
+            failures=0
+        else
+            failures=0
+        fi
+        last="$current"
+        sleep 5
+    done
+}
+
+case "${1:-start}" in
+    start)   start && sync_colors ;;
+    stop)    stop; printf 'arrêté\n' ;;
+    restart) start && sync_colors ;;
+    set)     set_wallpaper "${2:?usage: wpe set <id>}" ;;
+    random)  resolve_paths && set_wallpaper "$(list | cut -f1 | shuf -n1)" ;;
+    colors)  sync_colors ;;
+    watch)   watch_loop ;;
+    list)    list ;;
+    *)       printf 'usage: wpe {start|stop|restart|set <id>|random|colors|watch|list}\n' >&2; exit 1 ;;
+esac
