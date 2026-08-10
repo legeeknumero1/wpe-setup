@@ -7,7 +7,7 @@
 # static ones, and selecting one hands it to linux-wallpaperengine rather than
 # pushing a still frame to awww.
 #
-# Subcommands: detect | targets | install | status
+# Subcommands: detect | targets | install | cleanup | status
 #
 # Every patch is idempotent and anchored on text that is verified to exist
 # first: when an anchor is missing (upstream changed the file), that patch is
@@ -82,7 +82,7 @@ workshop_dir() {
 
 install_previews() {
     local ws dest n=0
-    ws="$(workshop_dir)" || { p_bad "contenu Workshop introuvable"; return 1; }
+    ws="$(workshop_dir)" || { p_bad "Workshop content not found"; return 1; }
     dest="$(wallpaper_dir)"
     mkdir -p "$dest" || return 1
 
@@ -107,14 +107,14 @@ install_previews() {
     # Counted from disk rather than accumulated in the loop, so the number
     # reported is what actually landed.
     n="$(find "$dest" -maxdepth 1 -name '0we_*' 2>/dev/null | wc -l)"
-    p_ok "$n aperçus exposés dans $dest"
+    p_ok "$n previews exposed in $dest"
 }
 
 # ─── 2. Route picker selections to the engine ────────────────────────────────
 
 patch_picker() {
     if grep -q "$MARKER" "$PICKER" 2>/dev/null; then
-        p_info "sélecteur déjà patché"
+        p_info "picker already patched"
         return 0
     fi
 
@@ -162,10 +162,10 @@ open(path, "w", encoding="utf-8").write(src[:i] + replacement + src[j + 2:])
 PYEOF
 
     case $? in
-        0) p_ok "sélecteur patché — les fonds 0we_ sont envoyés au moteur" ;;
-        2) p_warn "structure du sélecteur non reconnue — patch ignoré (fichier intact)"
-           p_info "imperative-dots a probablement changé ; signale-le sur le dépôt" ;;
-        *) p_bad "échec du patch du sélecteur"; return 1 ;;
+        0) p_ok "picker patched — 0we_ wallpapers now go to the engine" ;;
+        2) p_warn "unrecognised picker layout — patch skipped (file untouched)"
+           p_info "imperative-dots likely changed; please report it upstream" ;;
+        *) p_bad "failed to patch the picker"; return 1 ;;
     esac
 }
 
@@ -177,7 +177,7 @@ PYEOF
 
 patch_thumbnails() {
     if grep -q "$MARKER" "$QS_MANAGER" 2>/dev/null; then
-        p_info "génération de vignettes déjà optimisée"
+        p_info "thumbnail generation already optimised"
         return 0
     fi
 
@@ -247,9 +247,9 @@ open(path, "w", encoding="utf-8").write(src[:start] + fast + src[end:])
 PYEOF
 
     case $? in
-        0) p_ok "génération de vignettes parallélisée" ;;
-        2) p_warn "structure de qs_manager.sh non reconnue — patch ignoré (fichier intact)" ;;
-        *) p_bad "échec de l'optimisation des vignettes"; return 1 ;;
+        0) p_ok "thumbnail generation parallelised" ;;
+        2) p_warn "unrecognised qs_manager.sh layout — patch skipped (file untouched)" ;;
+        *) p_bad "failed to optimise thumbnails"; return 1 ;;
     esac
 }
 
@@ -266,13 +266,13 @@ wire_matugen_hook() {
         printf 'MATUGEN_HOOK="%s"\n' "$RELOAD_HOOK" >> "$cfg"
     fi
     sed -i 's|^SYNC_COLORS=.*|SYNC_COLORS=1|' "$cfg"
-    p_ok "palette reliée à matugen_reload.sh"
+    p_ok "palette wired to matugen_reload.sh"
 }
 
 wire_autostart() {
     command -v jq >/dev/null 2>&1 || return 0
     if jq -e '.startup[]? | select(.command | test("wpe watch"))' "$SETTINGS" >/dev/null 2>&1; then
-        p_info "autostart déjà configuré"
+        p_info "autostart already configured"
         return 0
     fi
     # Staged beside the target, not in /tmp: same filesystem (so the replace is
@@ -282,10 +282,10 @@ wire_autostart() {
     if jq '.startup += [{"command":"wpe watch"}]' "$SETTINGS" > "$tmp" 2>/dev/null \
        && [ -s "$tmp" ] && jq -e . "$tmp" >/dev/null 2>&1; then
         mv -f "$tmp" "$SETTINGS"
-        p_ok "« wpe watch » ajouté à l'autostart"
+        p_ok "added 'wpe watch' to autostart"
     else
         rm -f "$tmp"
-        p_warn "impossible de modifier settings.json — ajoute « wpe watch » à la main"
+        p_warn "could not edit settings.json — add 'wpe watch' manually"
     fi
 }
 
@@ -302,13 +302,13 @@ invalidate_thumb_cache() {
     find "$THUMB_CACHE/colors_markers" -maxdepth 1 -type f -delete 2>/dev/null
     rm -f "$THUMB_CACHE/colors.csv" "$THUMB_CACHE/colors.csv.bak" 2>/dev/null
     : > "$THUMB_CACHE/thumbs/.manifest" 2>/dev/null
-    p_ok "cache de vignettes invalidé (il se régénère à la prochaine ouverture)"
+    p_ok "thumbnail cache invalidated (rebuilds on next open)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 
 plugin_install() {
-    plugin_detect || { p_bad "imperative-dots non détecté"; return 1; }
+    plugin_detect || { p_bad "imperative-dots not detected"; return 1; }
 
     install_previews   || return 1
     patch_picker       || return 1
@@ -318,25 +318,25 @@ plugin_install() {
     invalidate_thumb_cache
 
     printf '\n'
-    p_info "Redémarre Quickshell pour appliquer :"
+    p_info "Restart Quickshell to apply:"
     p_info "  pkill -x quickshell && hyprctl dispatch exec 'quickshell -p ~/.config/hypr/scripts/quickshell/Shell.qml'"
     return 0
 }
 
 plugin_status() {
-    plugin_detect || { p_info "imperative-dots non détecté"; return 1; }
+    plugin_detect || { p_info "imperative-dots not detected"; return 1; }
     if grep -q "$MARKER" "$PICKER" 2>/dev/null; then
-        p_ok "sélecteur patché"
+        p_ok "picker patched"
     else
-        p_info "sélecteur non patché"
+        p_info "picker not patched"
     fi
     if grep -q "$MARKER" "$QS_MANAGER" 2>/dev/null; then
-        p_ok "vignettes optimisées"
+        p_ok "thumbnails optimised"
     else
-        p_info "vignettes non optimisées"
+        p_info "thumbnails not optimised"
     fi
     local n; n="$(find "$(wallpaper_dir)" -maxdepth 1 -name '0we_*' 2>/dev/null | wc -l)"
-    p_info "$n aperçus exposés"
+    p_info "$n previews exposed"
 }
 
 # Removes only what this plugin created, by name. Called by wpe-setup during
@@ -354,7 +354,7 @@ plugin_cleanup() {
     # Thumbnails of removed previews would otherwise keep them listed in the
     # picker, pointing at files that no longer exist.
     invalidate_thumb_cache >/dev/null 2>&1
-    p_ok "$n aperçus retirés"
+    p_ok "$n previews removed"
 }
 
 case "${1:-status}" in

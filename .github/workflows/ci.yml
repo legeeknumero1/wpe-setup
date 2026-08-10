@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      # -S style is the strictest level: it catches stylistic issues on top of
+      # correctness ones. The tree is expected to be clean at that level.
+      - name: Lint every script
+        run: shellcheck -s bash -S style wpe-setup.sh lib/wpe plugins/*.sh
+
+  syntax:
+    name: Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse every script
+        run: |
+          for f in wpe-setup.sh lib/wpe plugins/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+  contract:
+    name: Plugin contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every plugin must answer the four subcommands wpe-setup relies on.
+      # A plugin missing `cleanup` would silently leave files behind on rollback.
+      - name: Verify plugins implement the full contract
+        run: |
+          set -e
+          for p in plugins/*.sh; do
+            for sub in detect targets install cleanup status; do
+              grep -qE "^ *$sub\)" "$p" \
+                || { echo "$p does not handle '$sub'"; exit 1; }
+            done
+            echo "$p: contract ok"
+          done
+
+  no-hardcoded-paths:
+    name: No hardcoded paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Discovering paths instead of assuming them is the point of this tool,
+      # so a hardcoded home or Steam directory is a regression, not a detail.
+      - name: Reject hardcoded home and Steam directories
+        run: |
+          if grep -nE '/home/[a-z]+/|/Users/[a-z]+/' \
+               wpe-setup.sh lib/wpe plugins/*.sh; then
+            echo "Hardcoded path found — discover it at runtime instead."
+            exit 1
+          fi
+          echo "No hardcoded paths."

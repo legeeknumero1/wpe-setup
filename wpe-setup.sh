@@ -49,7 +49,7 @@ warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; log WARN "$1"; }
 bad()  { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$1"; log ERROR "$1"; }
 info() { printf '  %s·%s %s\n' "$C_DIM" "$C_RESET" "$1"; }
 head1() { printf '\n%s%s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
-die()  { printf '\n%sErreur:%s %s\n' "$C_RED$C_BOLD" "$C_RESET" "$1" >&2; log FATAL "$1"; exit 1; }
+die()  { printf '\n%sError:%s %s\n' "$C_RED$C_BOLD" "$C_RESET" "$1" >&2; log FATAL "$1"; exit 1; }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Detection — every path is probed, none is hardcoded
@@ -193,23 +193,23 @@ run_check() {
     CHECK_BLOCKERS=0
     CHECK_WARNINGS=0
 
-    head1 "Prérequis"
+    head1 "Prerequisites"
 
     local comp; comp="$(detect_compositor)"
     compositor_supported "$comp"
     case $? in
-        0) ok "Compositeur : $comp (wlr-layer-shell disponible)" ;;
-        2) bad "Compositeur : GNOME — n'implémente pas wlr-layer-shell."
-           info "Le moteur ne peut pas dessiner de fond d'écran sous GNOME Wayland."
-           info "Une session X11 ou un compositeur wlroots est nécessaire."
+        0) ok "Compositor: $comp (wlr-layer-shell available)" ;;
+        2) bad "Compositor: GNOME — does not implement wlr-layer-shell."
+           info "The engine cannot draw a wallpaper under GNOME Wayland."
+           info "An X11 session or a wlroots compositor is required."
            CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1)) ;;
-        3) warn "Compositeur : KDE Plasma — configuration manuelle requise."
-           info "KWin implémente layer-shell, mais la containment du bureau Plasma"
-           info "recouvre la couche background : le fond serait invisible."
-           info "Voir Almamu/linux-wallpaperengine discussion #472 (mode fenêtre"
-           info "+ règles KWin, au prix des icônes du bureau)."
+        3) warn "Compositor: KDE Plasma — manual setup required."
+           info "KWin implements layer-shell, but Plasma's desktop containment"
+           info "draws above the background layer, hiding the wallpaper."
+           info "See Almamu/linux-wallpaperengine discussion #472 (window mode"
+           info "plus KWin window rules, at the cost of desktop icons)."
            CHECK_WARNINGS=$((CHECK_WARNINGS + 1)) ;;
-        *) warn "Compositeur non reconnu : $comp — le rendu n'est pas garanti"
+        *) warn "Unrecognised compositor: $comp — rendering is not guaranteed"
            CHECK_WARNINGS=$((CHECK_WARNINGS + 1)) ;;
     esac
 
@@ -218,78 +218,78 @@ run_check() {
     # success branch ever returned non-zero.
     local engine
     if engine="$(detect_engine)"; then
-        ok "Moteur : $engine"
+        ok "Engine: $engine"
     else
-        bad "linux-wallpaperengine introuvable"
+        bad "linux-wallpaperengine not found"
         info "Arch/CachyOS : yay -S linux-wallpaperengine-git"
-        info "Autres : https://github.com/Almamu/linux-wallpaperengine"
+        info "Others: https://github.com/Almamu/linux-wallpaperengine"
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
     local roots; roots="$(detect_steam_roots)"
     if [ -n "$roots" ]; then
-        ok "Steam : $(echo "$roots" | wc -l) bibliothèque(s)"
+        ok "Steam: $(echo "$roots" | wc -l) library(ies)"
         echo "$roots" | while IFS= read -r r; do info "$r"; done
     else
-        bad "Aucune bibliothèque Steam trouvée"
+        bad "No Steam library found"
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
     local assets
     if assets="$(detect_assets_dir)"; then
-        ok "Assets Wallpaper Engine : $assets"
+        ok "Wallpaper Engine assets: $assets"
     else
-        bad "Wallpaper Engine n'est pas installé via Steam"
-        info "Les wallpapers 'scene' ont besoin de ses shaders et matériaux."
+        bad "Wallpaper Engine is not installed through Steam"
+        info "'scene' wallpapers need its shaders and materials."
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
     local n; n="$(count_wallpapers)"
     if [ "$n" -gt 0 ]; then
-        ok "Wallpapers Workshop : $n"
+        ok "Workshop wallpapers: $n"
     else
-        bad "Aucun wallpaper téléchargé"
-        info "Abonne-toi à des wallpapers dans le Workshop Steam, puis relance."
+        bad "No wallpaper downloaded"
+        info "Subscribe to wallpapers in the Steam Workshop, then run again."
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
     local audio; audio="$(detect_audio_server)"
     if [ "$audio" = "pipewire" ]; then
-        ok "Audio : PipeWire — --noautomute sera appliqué (obligatoire)"
+        ok "Audio: PipeWire — --noautomute will be applied (mandatory)"
     else
-        ok "Audio : $audio"
+        ok "Audio: $audio"
     fi
 
     local dep missing=()
     for dep in jq find awk; do command -v "$dep" >/dev/null 2>&1 || missing+=("$dep"); done
     if [ ${#missing[@]} -eq 0 ]; then
-        ok "Dépendances : jq, find, awk"
+        ok "Dependencies: jq, find, awk"
     else
-        bad "Manquant : ${missing[*]}"
+        bad "Missing: ${missing[*]}"
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
     if command -v matugen >/dev/null 2>&1; then
-        ok "matugen présent — synchronisation des couleurs activable"
+        ok "matugen present — colour sync available"
     else
-        info "matugen absent — la synchro des couleurs sera désactivée (optionnel)"
+        info "matugen missing — colour sync will stay off (optional)"
     fi
 
     local plugins; plugins="$(available_plugins)"
     if [ -n "$plugins" ]; then
         local p
         while IFS= read -r p; do
-            ok "Intégration disponible : $(basename "$p" .sh)"
+            ok "Integration available: $(basename "$p" .sh)"
         done <<< "$plugins"
     fi
 
     head1 "Verdict"
     if [ "$CHECK_BLOCKERS" -gt 0 ]; then
-        bad "$CHECK_BLOCKERS prérequis critique(s) manquant(s)"
+        bad "$CHECK_BLOCKERS critical prerequisite(s) missing"
         return 1
     fi
-    [ "$CHECK_WARNINGS" -gt 0 ] && warn "$CHECK_WARNINGS avertissement(s)"
-    ok "Tout est prêt"
+    [ "$CHECK_WARNINGS" -gt 0 ] && warn "$CHECK_WARNINGS warning(s)"
+    ok "Everything is ready"
     return 0
 }
 
@@ -365,9 +365,9 @@ create_backup() {
 }
 
 do_rollback() {
-    head1 "Restauration"
+    head1 "Rollback"
 
-    [ -d "$BACKUP_DIR" ] || die "Aucune sauvegarde trouvée dans $BACKUP_DIR"
+    [ -d "$BACKUP_DIR" ] || die "No backup found in $BACKUP_DIR"
 
     # The pristine snapshot recorded at first install, never a later one: after a
     # second install the newest archive contains the *installed* state, and
@@ -379,18 +379,18 @@ do_rollback() {
         [ -n "${BACKUP:-}" ] && [ -f "${BACKUP:-}" ] && archive="$BACKUP"
     fi
     [ -n "$archive" ] || archive="$(find "$BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' | sort | head -1)"
-    [ -n "$archive" ] || die "Aucune sauvegarde trouvée"
+    [ -n "$archive" ] || die "No backup found"
 
     local listing="${archive%.tar.gz}.files"
 
     # Refuse to touch anything until the archive is proven readable.
     tar tzf "$archive" >/dev/null 2>&1 \
-        || die "Sauvegarde illisible ($archive) — rien n'a été supprimé"
+        || die "Unreadable backup ($archive) — nothing was deleted"
 
-    info "Sauvegarde : $(basename "$archive")"
-    printf '\n  Restaurer cet état ? [o/N] '
+    info "Backup: $(basename "$archive")"
+    printf '\n  Restore this state? [y/N] '
     local reply; read -r reply
-    case "$reply" in [oO]|[yY]) ;; *) info "Annulé"; return 0 ;; esac
+    case "$reply" in [oO]|[yY]) ;; *) info "Cancelled"; return 0 ;; esac
 
     # Prove the archive really extracts before removing anything: listing it is
     # not enough, and deleting first only to discover extraction fails would
@@ -398,11 +398,11 @@ do_rollback() {
     # a rehearsal, discarded immediately.
     local staging
     staging="$(mktemp -d "$BACKUP_DIR/restore.XXXXXX")" \
-        || die "Impossible de préparer la restauration — rien n'a été supprimé"
+        || die "Cannot stage the restore — nothing was deleted"
 
     if ! tar xzf "$archive" -C "$staging" 2>/dev/null; then
         rm -rf "$staging"
-        die "Extraction impossible — rien n'a été supprimé"
+        die "Extraction failed — nothing was deleted"
     fi
     rm -rf "$staging"
 
@@ -423,11 +423,11 @@ do_rollback() {
     # failure when it cannot stamp attributes onto pre-existing parent
     # directories even though every file was copied correctly.
     tar xzf "$archive" -C / 2>/dev/null \
-        || die "Restauration incomplète — l'archive $archive est conservée"
+        || die "Incomplete restore — the archive $archive was kept"
 
     rm -f "$STATE_FILE"
-    ok "État restauré"
-    info "Le moteur et les paquets système n'ont pas été touchés."
+    ok "State restored"
+    info "The engine and system packages were left untouched."
     return 0
 }
 
@@ -463,14 +463,14 @@ EOF
 }
 
 do_install() {
-    head1 "Vérification avant installation"
+    head1 "Pre-flight check"
     if ! run_check; then
-        printf '\n%s  Des prérequis critiques manquent.%s\n' "$C_YELLOW$C_BOLD" "$C_RESET"
-        printf '  Continuer est %sfortement déconseillé%s : la configuration produite\n' "$C_BOLD" "$C_RESET"
-        printf '  ne fonctionnera pas, et tu risques de perturber ta session.\n'
-        printf '\n  Continuer quand même ? [o/N] '
+        printf '\n%s  Critical prerequisites are missing.%s\n' "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  Continuing is %sstrongly discouraged%s: the resulting setup\n' "$C_BOLD" "$C_RESET"
+        printf '  will not work, and you may disturb your session.\n'
+        printf '\n  Continue anyway? [y/N] '
         local reply; read -r reply
-        case "$reply" in [oO]|[yY]) warn "Poursuite forcée par l'utilisateur" ;; *) info "Annulé — rien n'a été modifié"; return 1 ;; esac
+        case "$reply" in [oO]|[yY]) warn "Forced by the user" ;; *) info "Cancelled — nothing was changed"; return 1 ;; esac
     fi
 
     # The rollback reference must stay the state of the machine *before* this
@@ -484,22 +484,22 @@ do_install() {
         [ -n "${BACKUP:-}" ] && [ -f "${BACKUP:-}" ] && pristine="$BACKUP"
     fi
 
-    head1 "Sauvegarde"
+    head1 "Backup"
     local archive
-    archive="$(create_backup)" || die "La sauvegarde a échoué — rien n'a été modifié"
-    ok "Sauvegarde créée : $archive"
+    archive="$(create_backup)" || die "Backup failed — nothing was changed"
+    ok "Backup created: $archive"
 
     if [ -n "$pristine" ]; then
-        info "Point de restauration conservé : $(basename "$pristine")"
+        info "Restore point kept: $(basename "$pristine")"
         archive="$pristine"
     else
-        info "« wpe-setup rollback » restaurera cet état exact."
+        info "'wpe-setup rollback' restores exactly this state."
     fi
 
-    head1 "Installation"
-    write_runtime || die "Installation impossible — utilise « wpe-setup rollback »"
-    ok "Commande « wpe » installée dans $BIN_DIR"
-    ok "Configuration écrite dans $CONFIG_DIR/config"
+    head1 "Install"
+    write_runtime || die "Install failed — run 'wpe-setup rollback'"
+    ok "Installed the 'wpe' command in $BIN_DIR"
+    ok "Wrote configuration to $CONFIG_DIR/config"
 
     mkdir -p "$STATE_DIR"
     cat > "$STATE_FILE" <<EOF
@@ -511,53 +511,53 @@ EOF
 
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
-        *) warn "$BIN_DIR n'est pas dans ton PATH"
-           info "Ajoute : export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        *) warn "$BIN_DIR is not in your PATH"
+           info "Add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
     esac
 
     local plugins; plugins="$(available_plugins)"
     if [ -n "$plugins" ]; then
-        head1 "Intégrations détectées"
+        head1 "Detected integrations"
         local p
         while IFS= read -r p; do
             info "$(basename "$p" .sh)"
         done <<< "$plugins"
-        printf '\n  Les activer ? Elles intègrent tes wallpapers directement\n'
-        printf '  dans ton environnement de bureau. [O/n] '
+        printf '\n  Enable them? They wire your wallpapers straight into\n'
+        printf '  your desktop environment. [Y/n] '
         local reply; read -r reply
         case "$reply" in
-            [nN]) info "Intégrations ignorées" ;;
+            [nN]) info "Integrations skipped" ;;
             *) while IFS= read -r p; do
-                   head1 "Intégration : $(basename "$p" .sh)"
-                   "$p" install || warn "l'intégration a échoué — « wpe-setup rollback » annule tout"
+                   head1 "Integration: $(basename "$p" .sh)"
+                   "$p" install || warn "integration failed — 'wpe-setup rollback' undoes everything"
                done <<< "$plugins" ;;
         esac
     fi
 
-    head1 "Terminé"
-    info "wpe list          les wallpapers disponibles"
-    info "wpe random        en appliquer un au hasard"
-    info "wpe set <id>      en appliquer un précis"
-    info "wpe watch         garder le moteur vivant (à mettre dans ton autostart)"
+    head1 "Done"
+    info "wpe list          available wallpapers"
+    info "wpe random        apply a random one"
+    info "wpe set <id>      apply a specific one"
+    info "wpe watch         keep the engine alive (put this in your autostart)"
     return 0
 }
 
 do_status() {
-    head1 "État"
+    head1 "Status"
     if [ -f "$STATE_FILE" ]; then
         # shellcheck disable=SC1090
         . "$STATE_FILE"
-        ok "Installé le ${INSTALLED_AT:-?} (version ${VERSION:-?})"
-        info "Sauvegarde : ${BACKUP:-aucune}"
+        ok "Installed on ${INSTALLED_AT:-?} (version ${VERSION:-?})"
+        info "Backup: ${BACKUP:-none}"
     else
-        info "wpe-setup n'est pas installé sur cette machine"
+        info "wpe-setup is not installed on this machine"
     fi
-    info "Compositeur : $(detect_compositor)"
-    info "Wallpapers  : $(count_wallpapers)"
+    info "Compositor: $(detect_compositor)"
+    info "Wallpapers: $(count_wallpapers)"
     if pgrep -x linux-wallpaper >/dev/null 2>&1; then
-        ok "Moteur en cours d'exécution"
+        ok "Engine running"
     else
-        info "Moteur arrêté"
+        info "Engine stopped"
     fi
 }
 
@@ -566,18 +566,18 @@ do_status() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 banner() {
-    printf '\n%s  wpe-setup %s%s — Wallpaper Engine sur Linux, en une commande\n' \
+    printf '\n%s  wpe-setup %s%s — Wallpaper Engine on Linux, in one command\n' \
         "$C_BOLD$C_BLUE" "$WPE_VERSION" "$C_RESET"
 }
 
 menu() {
     banner
-    printf '\n  %s1%s  Vérifier les prérequis %s(ne modifie rien)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-    printf '  %s2%s  Installer et configurer\n' "$C_BOLD" "$C_RESET"
-    printf '  %s3%s  Revenir en arrière %s(restaurer la sauvegarde)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-    printf '  %s4%s  État actuel\n' "$C_BOLD" "$C_RESET"
-    printf '  %s5%s  Quitter\n' "$C_BOLD" "$C_RESET"
-    printf '\n  Ton choix [1-5] : '
+    printf '\n  %s1%s  Check prerequisites %s(changes nothing)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '  %s2%s  Install and configure\n' "$C_BOLD" "$C_RESET"
+    printf '  %s3%s  Roll back %s(restore the backup)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '  %s4%s  Current status\n' "$C_BOLD" "$C_RESET"
+    printf '  %s5%s  Quit\n' "$C_BOLD" "$C_RESET"
+    printf '\n  Your choice [1-5]: '
 
     local choice; read -r choice
     case "$choice" in
@@ -586,7 +586,7 @@ menu() {
         3) do_rollback || true ;;
         4) do_status ;;
         5) return 0 ;;
-        *) warn "Choix invalide" ;;
+        *) warn "Invalid choice" ;;
     esac
 }
 

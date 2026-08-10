@@ -2,14 +2,15 @@
 #
 # wpe — drive linux-wallpaperengine on every connected output.
 #
-# --noautomute is MANDATORY on PipeWire systems. Without it the engine blocks
-# forever inside PulseAudioPlayingDetector's constructor: pa_mainloop_iterate()
-# never returns against pipewire-pulse. The engine still creates its layer
-# surface with correct geometry, so the failure looks like a rendering or
-# compositor bug, but it never even opens the wallpaper file. It is passed
-# unconditionally here because it costs nothing on PulseAudio.
+# --noautomute is MANDATORY. Without it the engine blocks forever inside
+# PulseAudioPlayingDetector's constructor: pa_mainloop_iterate() never returns
+# when the session's PulseAudio socket exists but nothing is listening on it —
+# a dead, failed or not-yet-started audio service. The engine still creates its
+# layer surface with correct geometry, so the failure looks like a rendering or
+# compositor bug, while the wallpaper file is never even opened. Passed
+# unconditionally: it costs nothing when the audio server is healthy.
 #
-# Part of wpe-setup — https://github.com/enzo/wpe-setup
+# Part of wpe-setup — https://github.com/legeeknumero1/wpe-setup
 # License: MIT
 
 set -uo pipefail
@@ -72,7 +73,7 @@ resolve_paths() {
             && ASSETS_DIR="$root/steamapps/common/wallpaper_engine/assets"
     done < <(steam_roots)
 
-    [ -n "$WORKSHOP_DIR" ] || { err "contenu Workshop introuvable — Wallpaper Engine est-il installé ?"; return 1; }
+    [ -n "$WORKSHOP_DIR" ] || { err "Workshop content not found — is Wallpaper Engine installed?"; return 1; }
     return 0
 }
 
@@ -116,16 +117,16 @@ start() {
     local engine
     engine="$(command -v linux-wallpaperengine 2>/dev/null)"
     if [ -z "$engine" ]; then
-        err "linux-wallpaperengine introuvable dans le PATH"
+        err "linux-wallpaperengine not found in PATH"
         return 1
     fi
 
     if [ -z "$WALLPAPER_ID" ]; then
-        err "aucun wallpaper choisi — essaie « wpe random » ou « wpe list »"
+        err "no wallpaper selected — try 'wpe random' or 'wpe list'"
         return 1
     fi
     if [ ! -d "$WORKSHOP_DIR/$WALLPAPER_ID" ]; then
-        err "wallpaper $WALLPAPER_ID introuvable"
+        err "wallpaper $WALLPAPER_ID not found"
         return 1
     fi
 
@@ -138,7 +139,7 @@ start() {
     done < <(outputs)
 
     if [ ${#args[@]} -eq 0 ]; then
-        err "aucune sortie détectée — compositeur non supporté ?"
+        err "no output detected — unsupported compositor?"
         return 1
     fi
 
@@ -153,7 +154,7 @@ start() {
         --screenshot-delay 30 \
         >"$ENGINE_LOG" 2>&1 </dev/null &
 
-    printf 'wallpaper %s appliqué\n' "$WALLPAPER_ID"
+    printf 'applied wallpaper %s\n' "$WALLPAPER_ID"
 }
 
 # Derive a colour scheme from a real rendered frame, so animated wallpapers
@@ -170,11 +171,11 @@ sync_colors() {
         sleep 0.5
         waited=$((waited + 1))
     done
-    [ -s "$FRAME" ] || { err "aucune frame capturée — couleurs inchangées"; return 1; }
+    [ -s "$FRAME" ] || { err "no frame captured — colours left unchanged"; return 1; }
 
     matugen image "$FRAME" --source-color-index 0 >/dev/null 2>&1 || return 1
     [ -n "$MATUGEN_HOOK" ] && [ -x "$MATUGEN_HOOK" ] && "$MATUGEN_HOOK"
-    printf 'couleurs synchronisées\n'
+    printf 'colours synced\n'
 }
 
 list() {
@@ -193,8 +194,8 @@ set_wallpaper() {
     resolve_paths || return 1
     # An empty id must be rejected explicitly: "$WORKSHOP_DIR/" is the workshop
     # folder itself, so -d would happily accept it and persist a broken config.
-    [ -n "${1:-}" ] || { err "aucun identifiant fourni"; return 1; }
-    [ -d "$WORKSHOP_DIR/$1" ] || { err "wallpaper $1 introuvable"; return 1; }
+    [ -n "${1:-}" ] || { err "no id given"; return 1; }
+    [ -d "$WORKSHOP_DIR/$1" ] || { err "wallpaper $1 not found"; return 1; }
     WALLPAPER_ID="$1"
     save_config
     start && sync_colors
@@ -224,7 +225,7 @@ watch_loop() {
 
 case "${1:-start}" in
     start)   start && sync_colors ;;
-    stop)    stop; printf 'arrêté\n' ;;
+    stop)    stop; printf 'stopped\n' ;;
     restart) start && sync_colors ;;
     set)     set_wallpaper "${2:?usage: wpe set <id>}" ;;
     random)  resolve_paths && set_wallpaper "$(list | cut -f1 | shuf -n1)" ;;

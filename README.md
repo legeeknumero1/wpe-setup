@@ -1,142 +1,184 @@
+<div align="center">
+
 # wpe-setup
 
-Wallpaper Engine wallpapers on Linux, set up by a single command — with a real
-backup and a real rollback.
+**Wallpaper Engine wallpapers on Linux — one command, with a rollback that actually works.**
 
-## 1. Purpose
+[![CI](https://github.com/legeeknumero1/wpe-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/legeeknumero1/wpe-setup/actions/workflows/ci.yml)
+[![ShellCheck](https://img.shields.io/badge/shellcheck-strict-brightgreen)](https://www.shellcheck.net/)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Shell](https://img.shields.io/badge/pure-bash-lightgrey)](https://www.gnu.org/software/bash/)
 
-`linux-wallpaperengine` renders Wallpaper Engine Workshop wallpapers on Linux,
-but getting it to actually draw takes a chain of undocumented steps. The most
-punishing one is silent:
+</div>
 
-> **If no PulseAudio-compatible server answers on the session socket, the engine
-> deadlocks in `PulseAudioPlayingDetector`'s constructor.** It still creates its
-> layer surface at the right geometry, so the wallpaper layer exists — at alpha
-> 0, forever, with no error message and no wallpaper file ever opened.
+---
 
-The fix is one flag, `--noautomute`. Finding it took a gdb backtrace of a hung
-process. This tool applies it, discovers every path instead of assuming it, and
-never touches anything it has not backed up first.
+## The bug that eats an afternoon
 
-It also, deliberately, refuses to pretend: it tells you up front when your
-compositor cannot host a wallpaper layer at all.
+You install [`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine). You run it. Nothing happens.
 
-## 2. Prerequisites
+No error. No crash. The process sits there at 1% CPU. `hyprctl layers` even shows the wallpaper surface, at exactly the right size — just permanently invisible. So you go hunting through GLEW errors, EGL contexts, compositor settings and scaling flags, and none of it is the problem.
 
-Hard requirements, all verified by `check` before anything is written:
+Here is the problem, from a gdb backtrace of the hung process:
 
-| Requirement | Why |
-|---|---|
-| Wallpaper Engine owned and installed via Steam | Its `assets/` folder holds the shaders and materials `scene` wallpapers need |
-| At least one Workshop wallpaper subscribed | Nothing to render otherwise |
-| `linux-wallpaperengine` on `PATH` | The renderer itself |
-| `jq`, `find`, `awk` | Parsing and discovery |
-| A compositor implementing `wlr-layer-shell` | See below |
-
-**Compositor support is not universal, and cannot be made so.** The engine draws
-through `wlr-layer-shell`:
-
-| Environment | Status |
-|---|---|
-| Hyprland, Sway, river, Wayfire, niri | Supported |
-| X11 (any WM) | Supported via window/root mode |
-| **KDE Plasma (Wayland)** | **Manual setup only** — see below |
-| **GNOME (Wayland)** | **Not possible** — Mutter does not implement the protocol |
-
-On **Plasma**, KWin does implement `wlr-layer-shell`, but Plasma's desktop
-containment draws above the background layer, so a wallpaper placed there is
-simply hidden. The working approach is window mode plus KWin window rules, which
-cannot be automated from here and costs the desktop icons — see
-[upstream discussion #472](https://github.com/Almamu/linux-wallpaperengine/discussions/472).
-`check` reports this instead of pretending it will work.
-
-`matugen` is optional; when present, the colour scheme can be derived from a
-real rendered frame of the animated wallpaper.
-
-## 3. Install
-
-```sh
-git clone https://github.com/<you>/wpe-setup && cd wpe-setup
-./wpe-setup.sh check      # audits prerequisites, writes nothing
-./wpe-setup.sh install    # backs up first, then configures
+```
+#2  ppoll ()
+#3  pa_mainloop_poll ()                                    ← libpulse
+#4  pa_mainloop_iterate ()
+#5  PulseAudioPlayingDetector::PulseAudioPlayingDetector()
+#6  WallpaperApplication::setupAudio()
+#7  WallpaperApplication::show()
 ```
 
-Run `./wpe-setup.sh` with no arguments for an interactive menu.
+The engine deadlocks in the **auto-mute detector** — the feature that lowers wallpaper audio when another app plays sound. If your session's PulseAudio socket exists but nothing is listening on it (a dead, failed, or not-yet-started audio service), `libpulse` connects and waits forever. Startup never reaches the point of opening the wallpaper file.
 
-To undo everything, at any time:
+The fix is a single flag: **`--noautomute`**.
+
+`wpe-setup` passes it, and takes care of everything else that has to be right.
+
+## Quick start
 
 ```sh
-./wpe-setup.sh rollback
+git clone https://github.com/legeeknumero1/wpe-setup
+cd wpe-setup
+./wpe-setup.sh
 ```
 
-Rollback restores the archive taken before installation *and deletes files that
-did not exist beforehand* — a restore that only unpacks an archive would leave
-new files behind and is not a rollback.
+That's it — you get a menu. Prefer it non-interactive?
 
-### Daily use
+```sh
+./wpe-setup.sh check      # audit prerequisites, write nothing
+./wpe-setup.sh install    # back up first, then configure
+./wpe-setup.sh rollback   # put everything back
+```
+
+## What `check` looks like
+
+```
+Prerequisites
+  ✓ Compositor: hyprland (wlr-layer-shell available)
+  ✓ Engine: /usr/bin/linux-wallpaperengine
+  ✓ Steam: 1 library(ies)
+  · ~/.local/share/Steam
+  ✓ Wallpaper Engine assets: ~/.local/share/Steam/steamapps/common/wallpaper_engine/assets
+  ✓ Workshop wallpapers: 226
+  ✓ Audio: PipeWire — --noautomute will be applied (mandatory)
+  ✓ Dependencies: jq, find, awk
+  ✓ matugen present — colour sync available
+  ✓ Integration available: imperative-dots
+
+Verdict
+  ✓ Everything is ready
+```
+
+`check` never writes anything. `install` refuses to start until it has produced a restorable archive.
+
+## Daily use
 
 ```sh
 wpe list            # id, type and title of every wallpaper
 wpe set <id>        # apply one
 wpe random          # apply a random one
-wpe watch           # keep the engine alive; put this in your autostart
+wpe watch           # keep the engine alive — put this in your autostart
 wpe stop            # stop rendering
 ```
 
-`wpe watch` covers the two ways a wallpaper silently disappears: the engine
-dying with nothing to restart it, and the monitor layout changing while the
-engine keeps rendering to a stale set of outputs.
+`wpe watch` covers the two ways a wallpaper silently vanishes: the engine dying with nothing to restart it, and the monitor layout changing while the engine keeps drawing to outputs that no longer exist.
 
-### Desktop integrations
+## Nothing is hardcoded
 
-`install` detects supported desktop setups and offers to wire the wallpapers
-directly into them. Integrations live in `plugins/` and are entirely optional.
+Steam moves around. People use Flatpak, Snap, a second SSD, a custom library folder. So every path is discovered at runtime — native, Flatpak and Snap roots, plus every extra library declared in `libraryfolders.vdf`. Same for outputs (`hyprctl`, `swaymsg`, `wlr-randr`, `xrandr`), the engine binary, and the audio server.
 
-**`imperative-dots`** — exposes every Wallpaper Engine wallpaper inside the
-Quickshell wallpaper picker, so `Super+W` lists them and selecting one hands it
-to the engine instead of pushing a still frame to `awww`. It also parallelises
-the picker's thumbnail generation, which upstream does one file at a time while
-decoding every frame of animated GIFs.
+CI enforces it: a build fails if a `/home/<user>/` path ever appears in the source.
 
-Both patches are idempotent, anchored on text verified to exist first, and
-skipped with a warning if upstream has changed the file — never applied blind.
+## Compatibility
 
-Writing a plugin means one executable in `plugins/` answering four subcommands:
+| Environment | Status |
+|---|---|
+| Hyprland, Sway, river, Wayfire, niri | Supported |
+| X11 (any WM) | Supported via window/root mode |
+| KDE Plasma (Wayland) | Manual setup only — see below |
+| GNOME (Wayland) | Not possible |
+
+**GNOME** — Mutter [does not implement `wlr-layer-shell`](https://gitlab.gnome.org/GNOME/mutter/-/issues/973), and no installer can work around that.
+
+**Plasma** — KWin *does* implement the protocol, but Plasma's desktop containment draws above the background layer, so a wallpaper placed there is simply hidden. The working recipe is window mode plus KWin window rules ([upstream discussion #472](https://github.com/Almamu/linux-wallpaperengine/discussions/472)), which cannot be automated and costs the desktop icons. `check` tells you this instead of pretending.
+
+## Requirements
+
+| Requirement | Why |
+|---|---|
+| Wallpaper Engine owned and installed via Steam | Its `assets/` folder holds the shaders `scene` wallpapers need |
+| At least one Workshop wallpaper subscribed | Nothing to render otherwise |
+| `linux-wallpaperengine` on `PATH` | The renderer |
+| `jq`, `find`, `awk` | Discovery and parsing |
+
+`matugen` is optional. When present, the colour scheme can be derived from a real rendered frame of the animated wallpaper — so a moving background still drives your theme.
+
+## Rollback, properly
+
+Most installers back up by copying a folder and hoping. This one:
+
+- **verifies the archive lists** before touching anything
+- **rehearses the extraction** into a staging directory, so a corrupt backup fails *before* any file is deleted
+- **removes files it created**, not just restoring ones it edited — a restore alone would leave new files behind
+- **keeps the pristine snapshot** across re-installs, because a second backup captures the already-installed system
+
+Run `install` twice then `rollback`, and you land on the state you started from.
+
+## Desktop integrations
+
+`install` detects supported desktop setups and offers to wire the wallpapers directly into them. Integrations live in `plugins/` and are entirely optional.
+
+**`imperative-dots`** — exposes every wallpaper inside the Quickshell picker, so `Super+W` lists them and selecting one hands it to the engine instead of pushing a frozen frame to `awww`. It also parallelises the picker's thumbnail generation, which upstream runs one file at a time while decoding every frame of animated GIFs.
+
+Writing a plugin means one executable answering five subcommands:
 
 | Subcommand | Contract |
 |---|---|
 | `detect` | exit 0 if this setup is present |
-| `targets` | list every **pre-existing** file it will modify, one per line |
+| `targets` | list every **pre-existing** file it will modify |
 | `install` | apply the integration, idempotently |
 | `cleanup` | remove the files it created, by name |
 | `status` | report what is currently applied |
 
-`targets` and `cleanup` are what make rollback complete, and they cover
-different things. `wpe-setup` archives the `targets` before the plugin runs, so
-files it *edited* can be restored. Files a plugin *creates* are not in that
-archive and would survive a restore, so each plugin records what it wrote and
-removes it in `cleanup`, which rollback calls before restoring the archive.
-Deleting the containing folder instead would take the user's own files with it.
+Patches are idempotent and anchored on text verified to exist first. If upstream changed the file, the patch is **skipped with a warning** rather than applied blind.
 
-## 4. Threat model
+## FAQ
 
-What this tool can do to a machine, and what constrains it.
+**Do I need to own Wallpaper Engine?**
+Yes. It is a paid Steam app, and its `assets/` folder is what `scene` wallpapers are built against. There is no substitute.
+
+**Does this modify Wallpaper Engine or my Steam files?**
+No. Workshop content is read-only to this tool.
+
+**Does it need root?**
+No. Everything lives under `~/.config`, `~/.local/bin` and `~/.local/state`.
+
+**My wallpaper has white bars on the sides.**
+Check the source video first — plenty of Workshop uploads have the bars baked into the file, in which case no scaling mode can help.
+
+**Why Bash and not a compiled binary?**
+Because "copy, paste, done" beats "install a toolchain first" for a setup tool. The whole thing is auditable in one sitting, and CI lints it at ShellCheck's strictest level.
+
+## Threat model
 
 | Surface | Exposure | Mitigation |
 |---|---|---|
-| Arbitrary file writes | Writes to `~/.config/wpe`, `~/.local/bin/wpe`, `~/.local/state/wpe*` only | Every target is listed in `backup_targets()`; nothing outside it is touched |
-| Destroying an existing config | Real: users run installers on live setups | No write happens before a backup archive exists; a failed backup aborts the install |
-| Privilege escalation | None — no `sudo`, no system paths, no services installed | Runs entirely as the invoking user |
+| Arbitrary file writes | `~/.config/wpe`, `~/.local/bin/wpe`, `~/.local/state/wpe*` only | Every target is declared; nothing outside it is touched |
+| Destroying an existing config | Real — installers get run on live setups | No write before a verified archive exists; a failed backup aborts the install |
+| Privilege escalation | None — no `sudo`, no system paths, no services | Runs entirely as the invoking user |
 | Remote code execution | None — no network access at any point | Nothing is downloaded, no `curl \| sh` |
-| Path injection via Steam library files | `libraryfolders.vdf` is parsed for paths | Extracted paths are only ever used after `-d` existence checks; never evaluated |
-| Untrusted Workshop content | Wallpapers are third-party and executed by the engine | Out of scope: the trust boundary is `linux-wallpaperengine` itself, not this tool |
-| Killing unrelated processes | `pkill -x linux-wallpaper` matches the truncated `comm` name | Never `pkill -f`, which would match this script's own command line |
+| Path injection via Steam files | `libraryfolders.vdf` is parsed for paths | Extracted paths are existence-checked, never evaluated |
+| Killing unrelated processes | `pkill -x linux-wallpaper` matches the truncated `comm` | Never `pkill -f`, which would match this script's own command line |
 
-**Known residual risk.** The engine renders untrusted Workshop content
-(shaders, scenes, and CEF-hosted web wallpapers) with your user's privileges.
-That risk belongs to `linux-wallpaperengine` and Wallpaper Engine, and this tool
-neither adds to nor reduces it. Do not subscribe to wallpapers you would not run
-as a program.
+**Residual risk.** The engine renders untrusted Workshop content — shaders, scenes, and CEF-hosted web wallpapers — with your user's privileges. That risk belongs to `linux-wallpaperengine` and Wallpaper Engine; this tool neither adds to nor reduces it. Don't subscribe to wallpapers you wouldn't run as a program.
+
+## Contributing
+
+Tested daily on Hyprland. The other compositors are implemented from their documented interfaces but not yet exercised on real hardware — **reports from Sway, river, Wayfire, niri and X11 are especially welcome**, working or not.
+
+CI must stay green: ShellCheck at `-S style`, syntax parse, plugin contract, and no hardcoded paths.
 
 ## Licence
 
