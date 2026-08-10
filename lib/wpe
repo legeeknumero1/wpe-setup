@@ -55,7 +55,7 @@ steam_roots() {
         [ -f "$vdf" ] || continue
         while IFS= read -r extra; do
             [ -n "$extra" ] && [ -d "$extra/steamapps" ] && roots+=("$(readlink -f "$extra")")
-        done < <(grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null)
+        done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
     printf '%s\n' "${roots[@]}" | awk 'NF && !seen[$0]++'
 }
@@ -82,7 +82,7 @@ outputs() {
     elif [ -n "${SWAYSOCK:-}" ] && command -v swaymsg >/dev/null 2>&1; then
         swaymsg -t get_outputs -r 2>/dev/null | jq -r '.[].name'
     elif command -v wlr-randr >/dev/null 2>&1; then
-        wlr-randr 2>/dev/null | grep -oP '^\S+'
+        wlr-randr 2>/dev/null | awk '/^[^ \t]/{print $1}'
     elif command -v xrandr >/dev/null 2>&1; then
         xrandr --query 2>/dev/null | awk '/ connected/{print $1}'
     fi
@@ -113,6 +113,13 @@ stop() {
 start() {
     resolve_paths || return 1
 
+    local engine
+    engine="$(command -v linux-wallpaperengine 2>/dev/null)"
+    if [ -z "$engine" ]; then
+        err "linux-wallpaperengine introuvable dans le PATH"
+        return 1
+    fi
+
     if [ -z "$WALLPAPER_ID" ]; then
         err "aucun wallpaper choisi — essaie « wpe random » ou « wpe list »"
         return 1
@@ -138,7 +145,7 @@ start() {
     [ -n "$ASSETS_DIR" ] && args+=(--assets-dir "$ASSETS_DIR")
     [ "$SILENT" = "1" ] && args+=(--silent)
 
-    setsid "$(command -v linux-wallpaperengine)" \
+    setsid "$engine" \
         "${args[@]}" \
         --noautomute \
         --fps "$FPS" \
@@ -181,6 +188,9 @@ list() {
 
 set_wallpaper() {
     resolve_paths || return 1
+    # An empty id must be rejected explicitly: "$WORKSHOP_DIR/" is the workshop
+    # folder itself, so -d would happily accept it and persist a broken config.
+    [ -n "${1:-}" ] || { err "aucun identifiant fourni"; return 1; }
     [ -d "$WORKSHOP_DIR/$1" ] || { err "wallpaper $1 introuvable"; return 1; }
     WALLPAPER_ID="$1"
     save_config

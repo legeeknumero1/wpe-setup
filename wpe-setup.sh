@@ -81,7 +81,7 @@ detect_steam_roots() {
         [ -f "$vdf" ] || continue
         while IFS= read -r extra; do
             [ -n "$extra" ] && [ -d "$extra/steamapps" ] && roots+=("$(readlink -f "$extra")")
-        done < <(grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null)
+        done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
 
     printf '%s\n' "${roots[@]}" | awk 'NF && !seen[$0]++'
@@ -141,13 +141,19 @@ detect_compositor() {
     fi
 }
 
-# GNOME's Mutter does not implement wlr-layer-shell and there is no workaround
-# an installer could apply, so it is called out explicitly rather than failing
-# mysteriously later.
+# 0 = layer-shell wallpapers work, 1 = unknown, 2 = impossible, 3 = manual setup.
+#
+# GNOME's Mutter does not implement wlr-layer-shell at all, and no installer can
+# work around that. KWin does implement it, but Plasma's desktop containment
+# draws above the background layer, so a wallpaper put there is simply hidden:
+# Plasma needs window mode plus KWin window rules, which cannot be automated
+# from here and costs the desktop icons. Both are stated up front rather than
+# failing mysteriously later.
 compositor_supported() {
     case "$1" in
-        hyprland|sway|niri|wayfire|river|plasma|x11) return 0 ;;
-        gnome) return 2 ;;
+        hyprland|sway|niri|wayfire|river|x11) return 0 ;;
+        plasma) return 3 ;;
+        gnome)  return 2 ;;
         *) return 1 ;;
     esac
 }
@@ -161,7 +167,7 @@ detect_outputs() {
             command -v swaymsg >/dev/null && swaymsg -t get_outputs -r 2>/dev/null | jq -r '.[].name' ;;
         *)
             if command -v wlr-randr >/dev/null 2>&1; then
-                wlr-randr 2>/dev/null | grep -oP '^\S+' | head -20
+                wlr-randr 2>/dev/null | awk '/^[^ \t]/{print $1}' | head -20
             elif command -v xrandr >/dev/null 2>&1; then
                 xrandr --query 2>/dev/null | awk '/ connected/{print $1}'
             fi ;;
@@ -197,6 +203,12 @@ run_check() {
            info "Le moteur ne peut pas dessiner de fond d'écran sous GNOME Wayland."
            info "Une session X11 ou un compositeur wlroots est nécessaire."
            CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1)) ;;
+        3) warn "Compositeur : KDE Plasma — configuration manuelle requise."
+           info "KWin implémente layer-shell, mais la containment du bureau Plasma"
+           info "recouvre la couche background : le fond serait invisible."
+           info "Voir Almamu/linux-wallpaperengine discussion #472 (mode fenêtre"
+           info "+ règles KWin, au prix des icônes du bureau)."
+           CHECK_WARNINGS=$((CHECK_WARNINGS + 1)) ;;
         *) warn "Compositeur non reconnu : $comp — le rendu n'est pas garanti"
            CHECK_WARNINGS=$((CHECK_WARNINGS + 1)) ;;
     esac
@@ -321,13 +333,23 @@ create_backup() {
     # Record every target, present or not: absence is information rollback needs.
     backup_targets > "$listing"
 
+    # A single archive format, always relative to /: a second format would make
+    # extraction ambiguous, and guessing wrong on restore writes files to the
+    # wrong place while the originals are already gone.
     if [ ${#existing[@]} -gt 0 ]; then
         tar czf "$archive" -C / "${existing[@]#/}" 2>/dev/null \
-            || tar czf "$archive" "${existing[@]}" 2>/dev/null \
-            || { rm -f "$archive"; return 1; }
+            || { rm -f "$archive" "$listing"; return 1; }
     else
         # Nothing pre-existing: an empty marker still lets rollback clean up.
-        tar czf "$archive" -T /dev/null 2>/dev/null
+        tar czf "$archive" -T /dev/null 2>/dev/null \
+            || { rm -f "$archive" "$listing"; return 1; }
+    fi
+
+    # An archive that cannot be listed cannot be restored. Better to fail here,
+    # before anything is modified, than at rollback time when it is too late.
+    if ! tar tzf "$archive" >/dev/null 2>&1; then
+        rm -f "$archive" "$listing"
+        return 1
     fi
 
     echo "$archive"
@@ -338,18 +360,49 @@ do_rollback() {
 
     [ -d "$BACKUP_DIR" ] || die "Aucune sauvegarde trouvée dans $BACKUP_DIR"
 
-    local archive
-    archive="$(find "$BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' | sort | tail -1)"
+    # The pristine snapshot recorded at first install, never a later one: after a
+    # second install the newest archive contains the *installed* state, and
+    # restoring it would be a no-op dressed up as a rollback.
+    local archive=""
+    if [ -f "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE_FILE"
+        [ -n "${BACKUP:-}" ] && [ -f "${BACKUP:-}" ] && archive="$BACKUP"
+    fi
+    [ -n "$archive" ] || archive="$(find "$BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' | sort | head -1)"
     [ -n "$archive" ] || die "Aucune sauvegarde trouvée"
 
     local listing="${archive%.tar.gz}.files"
+
+    # Refuse to touch anything until the archive is proven readable.
+    tar tzf "$archive" >/dev/null 2>&1 \
+        || die "Sauvegarde illisible ($archive) — rien n'a été supprimé"
 
     info "Sauvegarde : $(basename "$archive")"
     printf '\n  Restaurer cet état ? [o/N] '
     local reply; read -r reply
     case "$reply" in [oO]|[yY]) ;; *) info "Annulé"; return 0 ;; esac
 
-    # Remove what we created, then restore what existed.
+    # Prove the archive really extracts before removing anything: listing it is
+    # not enough, and deleting first only to discover extraction fails would
+    # destroy the user's files with nothing left to put back. The staged copy is
+    # a rehearsal, discarded immediately.
+    local staging
+    staging="$(mktemp -d "$BACKUP_DIR/restore.XXXXXX")" \
+        || die "Impossible de préparer la restauration — rien n'a été supprimé"
+
+    if ! tar xzf "$archive" -C "$staging" 2>/dev/null; then
+        rm -rf "$staging"
+        die "Extraction impossible — rien n'a été supprimé"
+    fi
+    rm -rf "$staging"
+
+    # Let integrations remove what they created before the config is restored.
+    local plugin
+    while IFS= read -r plugin; do
+        "$plugin" cleanup >/dev/null 2>&1 || true
+    done < <(available_plugins)
+
     if [ -f "$listing" ]; then
         local t
         while IFS= read -r t; do
@@ -357,7 +410,11 @@ do_rollback() {
         done < "$listing"
     fi
 
-    tar xzf "$archive" -C / 2>/dev/null || tar xzf "$archive" -C "$HOME" 2>/dev/null || true
+    # tar rather than cp: paths are stored relative to /, and cp -a reports
+    # failure when it cannot stamp attributes onto pre-existing parent
+    # directories even though every file was copied correctly.
+    tar xzf "$archive" -C / 2>/dev/null \
+        || die "Restauration incomplète — l'archive $archive est conservée"
 
     rm -f "$STATE_FILE"
     ok "État restauré"
@@ -388,7 +445,9 @@ SILENT=1
 SYNC_COLORS=$(command -v matugen >/dev/null 2>&1 && echo 1 || echo 0)
 EOF
 
-    cp "$(dirname "${BASH_SOURCE[0]}")/lib/wpe" "$BIN_DIR/wpe" 2>/dev/null \
+    # readlink -f, not a bare dirname: installing this script through a symlink
+    # in PATH would otherwise look for lib/ next to the link, not the source.
+    cp "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/wpe" "$BIN_DIR/wpe" 2>/dev/null \
         || return 1
     chmod +x "$BIN_DIR/wpe"
     return 0
@@ -405,11 +464,28 @@ do_install() {
         case "$reply" in [oO]|[yY]) warn "Poursuite forcée par l'utilisateur" ;; *) info "Annulé — rien n'a été modifié"; return 1 ;; esac
     fi
 
+    # The rollback reference must stay the state of the machine *before* this
+    # tool ever ran. Re-installing takes a fresh snapshot for safety, but the
+    # pristine one keeps its role, otherwise rollback would restore an
+    # already-installed system.
+    local pristine=""
+    if [ -f "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE_FILE"
+        [ -n "${BACKUP:-}" ] && [ -f "${BACKUP:-}" ] && pristine="$BACKUP"
+    fi
+
     head1 "Sauvegarde"
     local archive
     archive="$(create_backup)" || die "La sauvegarde a échoué — rien n'a été modifié"
     ok "Sauvegarde créée : $archive"
-    info "« wpe-setup rollback » restaurera cet état exact."
+
+    if [ -n "$pristine" ]; then
+        info "Point de restauration conservé : $(basename "$pristine")"
+        archive="$pristine"
+    else
+        info "« wpe-setup rollback » restaurera cet état exact."
+    fi
 
     head1 "Installation"
     write_runtime || die "Installation impossible — utilise « wpe-setup rollback »"

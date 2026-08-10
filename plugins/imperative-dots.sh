@@ -26,6 +26,10 @@ readonly WE_APPID=431960
 # Marker proving a patch was already applied, so re-running is safe.
 readonly MARKER="wpe-setup:imperative-dots"
 
+# Files this plugin creates. They live inside the user's wallpaper folder, which
+# must not be wiped wholesale, so each one is recorded and removed by name.
+readonly CREATED_MANIFEST="${XDG_STATE_HOME:-$HOME/.local/state}/wpe-setup/imperative-dots.created"
+
 p_ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 p_warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 p_bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; }
@@ -64,7 +68,7 @@ workshop_dir() {
         while IFS= read -r extra; do
             [ -d "$extra/steamapps/workshop/content/$WE_APPID" ] && {
                 echo "$extra/steamapps/workshop/content/$WE_APPID"; return 0; }
-        done < <(grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null)
+        done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
     return 1
 }
@@ -82,16 +86,22 @@ install_previews() {
     dest="$(wallpaper_dir)"
     mkdir -p "$dest" || return 1
 
-    local d id preview ext
+    mkdir -p "$(dirname "$CREATED_MANIFEST")"
+    : > "$CREATED_MANIFEST"
+
+    local d id preview ext target
     for d in "$ws"/*/; do
         [ -f "$d/project.json" ] || continue
         id="$(basename "$d")"
         preview="$(jq -r '.preview // empty' "$d/project.json" 2>/dev/null)"
         [ -n "$preview" ] && [ -f "$d/$preview" ] || continue
         ext="${preview##*.}"
+        target="$dest/0we_$id.$ext"
         # Real files, not symlinks: Qt's FolderListModel is not guaranteed to
         # follow links, and a picker showing nothing is impossible to diagnose.
-        cp -L -- "$d/$preview" "$dest/0we_$id.$ext" 2>/dev/null
+        if cp -L -- "$d/$preview" "$target" 2>/dev/null; then
+            printf '%s\n' "$target" >> "$CREATED_MANIFEST"
+        fi
     done
 
     # Counted from disk rather than accumulated in the loop, so the number
@@ -223,8 +233,11 @@ fast = '''        # ''' + marker + '''
         export -f gen_thumb
         export THUMB_DIR SRC_DIR
 
+        # NUL-delimited rather than xargs -d, which is a GNU extension: this form
+        # also survives filenames containing whitespace.
         comm -23 "$SRC_LIST" <(sed 's/^000_//' "$MANIFEST" | sort) \\
-            | xargs -r -d '\\n' -P "$(nproc)" -I{} bash -c 'gen_thumb "$@"' _ {}
+            | tr '\\n' '\\0' \\
+            | xargs -0 -r -P "$(nproc 2>/dev/null || echo 4)" -I{} bash -c 'gen_thumb "$@"' _ {}
 
         # Rebuilt from disk rather than appended per job, which would race.
         build_manifest
@@ -320,10 +333,29 @@ plugin_status() {
     p_info "$n aperçus exposés"
 }
 
+# Removes only what this plugin created, by name. Called by wpe-setup during
+# rollback, before the archived dotfiles are restored. Deleting the whole
+# wallpaper folder would destroy the user's own wallpapers.
+plugin_cleanup() {
+    local n=0 f
+    if [ -f "$CREATED_MANIFEST" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] && [ -f "$f" ] && rm -f -- "$f" && n=$((n + 1))
+        done < "$CREATED_MANIFEST"
+        rm -f "$CREATED_MANIFEST"
+    fi
+
+    # Thumbnails of removed previews would otherwise keep them listed in the
+    # picker, pointing at files that no longer exist.
+    invalidate_thumb_cache >/dev/null 2>&1
+    p_ok "$n aperçus retirés"
+}
+
 case "${1:-status}" in
     detect)  plugin_detect ;;
     targets) plugin_targets ;;
     install) plugin_install ;;
+    cleanup) plugin_cleanup ;;
     status)  plugin_status ;;
-    *)       printf 'usage: %s {detect|targets|install|status}\n' "$(basename "$0")" >&2; exit 1 ;;
+    *)       printf 'usage: %s {detect|targets|install|cleanup|status}\n' "$(basename "$0")" >&2; exit 1 ;;
 esac

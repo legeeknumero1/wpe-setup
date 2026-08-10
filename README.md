@@ -39,9 +39,16 @@ through `wlr-layer-shell`:
 | Environment | Status |
 |---|---|
 | Hyprland, Sway, river, Wayfire, niri | Supported |
-| KDE Plasma (Wayland) | Supported |
 | X11 (any WM) | Supported via window/root mode |
+| **KDE Plasma (Wayland)** | **Manual setup only** — see below |
 | **GNOME (Wayland)** | **Not possible** — Mutter does not implement the protocol |
+
+On **Plasma**, KWin does implement `wlr-layer-shell`, but Plasma's desktop
+containment draws above the background layer, so a wallpaper placed there is
+simply hidden. The working approach is window mode plus KWin window rules, which
+cannot be automated from here and costs the desktop icons — see
+[upstream discussion #472](https://github.com/Almamu/linux-wallpaperengine/discussions/472).
+`check` reports this instead of pretending it will work.
 
 `matugen` is optional; when present, the colour scheme can be derived from a
 real rendered frame of the animated wallpaper.
@@ -99,13 +106,17 @@ Writing a plugin means one executable in `plugins/` answering four subcommands:
 | Subcommand | Contract |
 |---|---|
 | `detect` | exit 0 if this setup is present |
-| `targets` | list every file it will modify, one per line |
+| `targets` | list every **pre-existing** file it will modify, one per line |
 | `install` | apply the integration, idempotently |
+| `cleanup` | remove the files it created, by name |
 | `status` | report what is currently applied |
 
-`targets` is what makes rollback complete: `wpe-setup` archives those files
-before the plugin runs, so undoing an integration restores the dotfiles it
-edited.
+`targets` and `cleanup` are what make rollback complete, and they cover
+different things. `wpe-setup` archives the `targets` before the plugin runs, so
+files it *edited* can be restored. Files a plugin *creates* are not in that
+archive and would survive a restore, so each plugin records what it wrote and
+removes it in `cleanup`, which rollback calls before restoring the archive.
+Deleting the containing folder instead would take the user's own files with it.
 
 ## 4. Threat model
 
