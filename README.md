@@ -13,13 +13,17 @@
 
 ---
 
-## The bug that eats an afternoon
+## What this is
 
-You install [`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine). You run it. Nothing happens.
+[`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine) is the project that does the hard part: it renders Wallpaper Engine's Workshop content natively on Linux. It is excellent, and this tool would not exist without it.
 
-No error. No crash. The process sits there at 1% CPU. `hyprctl layers` even shows the wallpaper surface, at exactly the right size — just permanently invisible. So you go hunting through GLEW errors, EGL contexts, compositor settings and scaling flags, and none of it is the problem.
+What it does not do — by design, it is a renderer — is find your Steam library, work out your outputs, survive a monitor being unplugged, or put your config back when you change your mind. `wpe-setup` is the setup layer around it.
 
-Here is the problem, from a gdb backtrace of the hung process:
+It also encodes one environment gotcha that is genuinely hard to diagnose alone.
+
+### The silent hang
+
+On a machine whose audio service is down, the engine starts and then simply stops: no error, ~1% CPU, and a wallpaper surface that exists at the right size but never displays. A gdb backtrace of the hung process shows where it waits:
 
 ```
 #2  ppoll ()
@@ -30,11 +34,11 @@ Here is the problem, from a gdb backtrace of the hung process:
 #7  WallpaperApplication::show()
 ```
 
-The engine deadlocks in the **auto-mute detector** — the feature that lowers wallpaper audio when another app plays sound. If your session's PulseAudio socket exists but nothing is listening on it (a dead, failed, or not-yet-started audio service), `libpulse` connects and waits forever. Startup never reaches the point of opening the wallpaper file.
+It is stuck in the optional **auto-mute detector**. When the session's PulseAudio socket exists but nothing is listening on it — a dead, failed or not-yet-started audio service — `libpulse` connects and waits indefinitely, so startup never reaches the wallpaper.
 
-The fix is a single flag: **`--noautomute`**.
+`--noautomute` skips that detector entirely. It is the flag the community already uses on KDE, and `wpe-setup` passes it everywhere, because it costs nothing when audio is healthy.
 
-`wpe-setup` passes it, and takes care of everything else that has to be right.
+If you only take one thing from this repository, take that flag.
 
 ## Quick start
 
@@ -53,6 +57,9 @@ That's it — you get a menu. Prefer it non-interactive?
 ```
 
 ## What `check` looks like
+
+Sample run on one machine — the numbers are simply what was found there, not
+thresholds of any kind:
 
 ```
 Prerequisites
@@ -85,11 +92,24 @@ wpe stop            # stop rendering
 
 `wpe watch` covers the two ways a wallpaper silently vanishes: the engine dying with nothing to restart it, and the monitor layout changing while the engine keeps drawing to outputs that no longer exist.
 
-## Nothing is hardcoded
+## Paths are discovered, not assumed
 
-Steam moves around. People use Flatpak, Snap, a second SSD, a custom library folder. So every path is discovered at runtime — native, Flatpak and Snap roots, plus every extra library declared in `libraryfolders.vdf`. Same for outputs (`hyprctl`, `swaymsg`, `wlr-randr`, `xrandr`), the engine binary, and the audio server.
+Steam moves around. People use Flatpak, Snap, a second SSD, a relocated
+`XDG_DATA_HOME`, a custom library folder. So nothing about your layout is
+assumed:
 
-CI enforces it: a build fails if a `/home/<user>/` path ever appears in the source.
+- **Steam roots** — native, Flatpak and Snap locations are probed, `XDG_DATA_HOME` is honoured, `~/.steam/root` symlinks are followed, and every additional library declared in `libraryfolders.vdf` is picked up
+- **Outputs** — `hyprctl`, `swaymsg`, `wlr-randr` or `xrandr`, whichever fits your session
+- **Engine, audio server, `matugen`** — resolved through `PATH` and process state
+
+To be precise rather than boastful: a discovery routine has to start
+*somewhere*, so there is a seed list of standard install locations
+(`~/.steam`, the Flatpak and Snap roots, `/usr/local/share/Steam`). Those are
+distribution conventions, not assumptions about you — and any real library is
+then read from Steam's own manifest.
+
+CI enforces the rest: the build fails if a `/home/<user>/` path ever appears in
+the source.
 
 ## Compatibility
 
@@ -180,6 +200,31 @@ Tested daily on Hyprland. The other compositors are implemented from their docum
 
 CI must stay green: ShellCheck at `-S style`, syntax parse, plugin contract, and no hardcoded paths.
 
-## Licence
+## Credits and licensing
 
-MIT.
+This project stands on other people's work, and the licence situation deserves
+stating plainly rather than being buried.
+
+**[`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine) — GPL-3.0, by Almamu and contributors.**
+It does the actual rendering. `wpe-setup` contains none of its code: it locates
+the binary and runs it as a separate process. Under
+[GPL-3.0's own aggregate clause](https://www.gnu.org/licenses/gpl-3.0.en.html),
+invoking an independent program does not make the caller a derivative work, so
+this repository is MIT. If you redistribute the engine itself, GPL-3.0 applies
+to it — that obligation is yours, not this tool's.
+
+**[`imperative-dots`](https://github.com/ilyamiro/imperative-dots) — no licence declared, by ilyamiro.**
+The optional plugin edits *your local copy* of these dotfiles on your own
+machine, which is yours to modify. It ships no code copied from that project:
+the replacement it writes is independently written, and the short strings it
+matches on exist only so a patch can be aborted when the file does not look as
+expected. With no licence declared, the default is all rights reserved — so if
+you fork or redistribute anything from that project, ask the author first.
+
+**Wallpaper Engine** is a commercial Steam application by Kristjan Skutta. This
+tool neither bundles nor circumvents it; you need to own it.
+
+Everything in this repository is **MIT** — see [LICENSE](LICENSE).
+
+If you maintain any of the projects above and want a citation changed, a claim
+corrected, or this integration removed, open an issue and it will be handled.

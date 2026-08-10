@@ -55,7 +55,7 @@ wallpaper_dir() {
 
 workshop_dir() {
     local -a candidates=(
-        "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.steam/root"
+        "${XDG_DATA_HOME:-$HOME/.local/share}/Steam" "$HOME/.steam/steam" "$HOME/.steam/root"
         "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
         "$HOME/snap/steam/common/.local/share/Steam"
     )

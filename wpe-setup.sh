@@ -60,7 +60,7 @@ die()  { printf '\n%sError:%s %s\n' "$C_RED$C_BOLD" "$C_RESET" "$1" >&2; log FAT
 # tell us about the extra drives.
 detect_steam_roots() {
     local -a candidates=(
-        "$HOME/.local/share/Steam"
+        "${XDG_DATA_HOME:-$HOME/.local/share}/Steam"
         "$HOME/.steam/steam"
         "$HOME/.steam/root"
         "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
