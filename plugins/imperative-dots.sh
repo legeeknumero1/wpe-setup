@@ -325,10 +325,16 @@ plugin_install() {
 
 plugin_status() {
     plugin_detect || { p_info "imperative-dots non détecté"; return 1; }
-    grep -q "$MARKER" "$PICKER" 2>/dev/null \
-        && p_ok "sélecteur patché" || p_info "sélecteur non patché"
-    grep -q "$MARKER" "$QS_MANAGER" 2>/dev/null \
-        && p_ok "vignettes optimisées" || p_info "vignettes non optimisées"
+    if grep -q "$MARKER" "$PICKER" 2>/dev/null; then
+        p_ok "sélecteur patché"
+    else
+        p_info "sélecteur non patché"
+    fi
+    if grep -q "$MARKER" "$QS_MANAGER" 2>/dev/null; then
+        p_ok "vignettes optimisées"
+    else
+        p_info "vignettes non optimisées"
+    fi
     local n; n="$(find "$(wallpaper_dir)" -maxdepth 1 -name '0we_*' 2>/dev/null | wc -l)"
     p_info "$n aperçus exposés"
 }

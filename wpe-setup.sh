@@ -213,12 +213,18 @@ run_check() {
            CHECK_WARNINGS=$((CHECK_WARNINGS + 1)) ;;
     esac
 
-    local engine; engine="$(detect_engine)" \
-        && ok "Moteur : $engine" \
-        || { bad "linux-wallpaperengine introuvable"
-             info "Arch/CachyOS : yay -S linux-wallpaperengine-git"
-             info "Autres : https://github.com/Almamu/linux-wallpaperengine"
-             CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1)); }
+    # Explicit if/else, not A && B || C: these branches decide whether install is
+    # allowed to proceed, and the short form would run the failure branch if the
+    # success branch ever returned non-zero.
+    local engine
+    if engine="$(detect_engine)"; then
+        ok "Moteur : $engine"
+    else
+        bad "linux-wallpaperengine introuvable"
+        info "Arch/CachyOS : yay -S linux-wallpaperengine-git"
+        info "Autres : https://github.com/Almamu/linux-wallpaperengine"
+        CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
+    fi
 
     local roots; roots="$(detect_steam_roots)"
     if [ -n "$roots" ]; then
@@ -229,11 +235,14 @@ run_check() {
         CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
     fi
 
-    local assets; assets="$(detect_assets_dir)" \
-        && ok "Assets Wallpaper Engine : $assets" \
-        || { bad "Wallpaper Engine n'est pas installé via Steam"
-             info "Les wallpapers 'scene' ont besoin de ses shaders et matériaux."
-             CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1)); }
+    local assets
+    if assets="$(detect_assets_dir)"; then
+        ok "Assets Wallpaper Engine : $assets"
+    else
+        bad "Wallpaper Engine n'est pas installé via Steam"
+        info "Les wallpapers 'scene' ont besoin de ses shaders et matériaux."
+        CHECK_BLOCKERS=$((CHECK_BLOCKERS + 1))
+    fi
 
     local n; n="$(count_wallpapers)"
     if [ "$n" -gt 0 ]; then
@@ -427,7 +436,7 @@ do_rollback() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 write_runtime() {
-    local workshop assets outputs
+    local workshop assets
     workshop="$(detect_workshop_dir)" || return 1
     assets="$(detect_assets_dir)"     || assets=""
 
@@ -545,7 +554,11 @@ do_status() {
     fi
     info "Compositeur : $(detect_compositor)"
     info "Wallpapers  : $(count_wallpapers)"
-    pgrep -x linux-wallpaper >/dev/null 2>&1 && ok "Moteur en cours d'exécution" || info "Moteur arrêté"
+    if pgrep -x linux-wallpaper >/dev/null 2>&1; then
+        ok "Moteur en cours d'exécution"
+    else
+        info "Moteur arrêté"
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
