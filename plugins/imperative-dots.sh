@@ -94,7 +94,9 @@ install_previews() {
         [ -f "$d/project.json" ] || continue
         id="$(basename "$d")"
         preview="$(jq -r '.preview // empty' "$d/project.json" 2>/dev/null)"
-        [ -n "$preview" ] && [ -f "$d/$preview" ] || continue
+        if [ -z "$preview" ] || [ ! -f "$d/$preview" ]; then
+            continue
+        fi
         ext="${preview##*.}"
         target="$dest/0we_$id.$ext"
         # Real files, not symlinks: Qt's FolderListModel is not guaranteed to
