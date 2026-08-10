@@ -102,11 +102,22 @@ assumed:
 - **Outputs** — `hyprctl`, `swaymsg`, `wlr-randr` or `xrandr`, whichever fits your session
 - **Engine, audio server, `matugen`** — resolved through `PATH` and process state
 
-To be precise rather than boastful: a discovery routine has to start
-*somewhere*, so there is a seed list of standard install locations
-(`~/.steam`, the Flatpak and Snap roots, `/usr/local/share/Steam`). Those are
-distribution conventions, not assumptions about you — and any real library is
-then read from Steam's own manifest.
+Steam discovery escalates in tiers and stops at the first hit, so the ordinary
+case stays instant while an unusual install is still found:
+
+| Tier | Looks at |
+|---|---|
+| 1 | Conventional locations — native, Flatpak, Snap, `XDG_DATA_HOME`, `~/.steam` symlinks |
+| 2 | What Steam records about itself — `registry.vdf`, `.steampath` |
+| 3 | The launcher's own location, resolved through `PATH` and Flatpak |
+| 4 | A depth-limited scan of `$HOME`, `/mnt`, `/media`, `/run/media`, `/srv`, `/opt`, under a 20-second timeout |
+
+Then every extra library declared in `libraryfolders.vdf` is added, which is
+what finds a games drive sharing nothing with the install directory.
+
+Measured: ~100 ms when Steam is where you would expect, ~150 ms for a library
+buried at `~/Games/MySSD/SteamLibrary`, and no hang at all on a machine with no
+Steam anywhere. **"Not found" should mean it is genuinely not there.**
 
 CI enforces the rest: the build fails if a `/home/<user>/` path ever appears in
 the source.

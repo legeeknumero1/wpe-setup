@@ -56,9 +56,20 @@ die()  { printf '\n%sError:%s %s\n' "$C_RED$C_BOLD" "$C_RESET" "$1" >&2; log FAT
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Steam can be a native package, a Flatpak or a Snap, and users relocate their
-# libraries freely. Collect every plausible root, then let libraryfolders.vdf
-# tell us about the extra drives.
+# libraries freely. Discovery runs in escalating tiers and stops as soon as
+# something is found, so the common case stays instant while an unusual install
+# is still located: reporting "not found" when the files are plainly on the
+# disk is the worst outcome this tool could produce.
+#
+#   1. standard install locations
+#   2. paths Steam records about itself (registry.vdf, .steampath)
+#   3. the launcher's own location, resolved through PATH and Flatpak
+#   4. a bounded filesystem scan of mount points where libraries actually live
 detect_steam_roots() {
+    local -a roots=()
+    local c
+
+    # ── Tier 1: conventional locations ──────────────────────────────────────
     local -a candidates=(
         "${XDG_DATA_HOME:-$HOME/.local/share}/Steam"
         "$HOME/.steam/steam"
@@ -67,14 +78,64 @@ detect_steam_roots() {
         "$HOME/snap/steam/common/.local/share/Steam"
         "/usr/local/share/Steam"
     )
-    local -a roots=()
-    local c
-
     for c in "${candidates[@]}"; do
         [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
     done
 
-    # Additional library folders declared by Steam itself.
+    # ── Tier 2: what Steam says about itself ────────────────────────────────
+    # registry.vdf carries the install path; .steampath is a plain-text pointer
+    # some setups leave behind. Both survive a fully relocated installation.
+    local hint
+    for hint in "$HOME/.steam/registry.vdf" "$HOME/.local/share/Steam/registry.vdf"; do
+        [ -f "$hint" ] || continue
+        while IFS= read -r c; do
+            [ -n "$c" ] && [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
+        done < <(sed -n 's/.*"[Ss]team[Pp]ath"[[:space:]]*"\([^"]*\)".*/\1/p' "$hint" 2>/dev/null)
+    done
+    for hint in "$HOME/.steampath" "$HOME/.steam/steam.pid"; do
+        [ -f "$hint" ] || continue
+        c="$(sed -n '1s/[[:space:]]*$//p' "$hint" 2>/dev/null)"
+        [ -n "$c" ] && [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
+    done
+
+    # ── Tier 3: follow the launcher ─────────────────────────────────────────
+    if [ ${#roots[@]} -eq 0 ]; then
+        local bin
+        bin="$(command -v steam 2>/dev/null)"
+        if [ -n "$bin" ]; then
+            bin="$(readlink -f "$bin")"
+            # Walk up from the binary: a self-contained install keeps steamapps
+            # a couple of levels above bin/.
+            local up="$bin"
+            for _ in 1 2 3 4; do
+                up="$(dirname "$up")"
+                [ -d "$up/steamapps" ] && roots+=("$(readlink -f "$up")")
+            done
+        fi
+        if command -v flatpak >/dev/null 2>&1; then
+            while IFS= read -r c; do
+                [ -n "$c" ] && [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
+            done < <(flatpak --installations 2>/dev/null | while IFS= read -r inst; do
+                        printf '%s\n' "$inst/app/com.valvesoftware.Steam/current/active/files/share/Steam"
+                     done)
+        fi
+    fi
+
+    # ── Tier 4: bounded scan ────────────────────────────────────────────────
+    # Only when everything above came up empty. Restricted to the places people
+    # actually mount extra drives, depth-limited and wrapped in a timeout so a
+    # slow or huge disk cannot hang the tool.
+    if [ ${#roots[@]} -eq 0 ]; then
+        local -a scan_roots=("$HOME" /mnt /media /run/media /srv /opt)
+        local found
+        while IFS= read -r found; do
+            [ -n "$found" ] && roots+=("$(readlink -f "$(dirname "$found")")")
+        done < <(timeout 20 find "${scan_roots[@]}" -maxdepth 6 -type d \
+                     -name steamapps -not -path '*/proc/*' 2>/dev/null | head -20)
+    fi
+
+    # Additional library folders declared by Steam itself. This is what finds a
+    # games drive that shares nothing with the install directory.
     local vdf root extra
     for root in "${roots[@]}"; do
         vdf="$root/steamapps/libraryfolders.vdf"
@@ -84,6 +145,7 @@ detect_steam_roots() {
         done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
 
+    [ ${#roots[@]} -gt 0 ] || return 1
     printf '%s\n' "${roots[@]}" | awk 'NF && !seen[$0]++'
 }
 

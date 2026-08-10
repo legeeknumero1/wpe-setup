@@ -39,18 +39,51 @@ err() { printf 'wpe: %s\n' "$1" >&2; }
 
 # ─── Path discovery (cached hints are verified, never trusted blindly) ────────
 
+# Escalating tiers, stopping at the first hit: conventional locations, then
+# what Steam records about itself, then the launcher's own path, then a bounded
+# scan of the mount points where extra libraries actually live. Saying "not
+# found" while the files sit on the disk is the one outcome worth this effort.
 steam_roots() {
+    local -a roots=()
+    local c vdf extra root hint
+
     local -a candidates=(
         "${XDG_DATA_HOME:-$HOME/.local/share}/Steam" "$HOME/.steam/steam" "$HOME/.steam/root"
         "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
         "$HOME/snap/steam/common/.local/share/Steam"
+        "/usr/local/share/Steam"
     )
-    local -a roots=()
-    local c vdf extra root
-
     for c in "${candidates[@]}"; do
         [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
     done
+
+    for hint in "$HOME/.steam/registry.vdf" "$HOME/.local/share/Steam/registry.vdf"; do
+        [ -f "$hint" ] || continue
+        while IFS= read -r c; do
+            [ -n "$c" ] && [ -d "$c/steamapps" ] && roots+=("$(readlink -f "$c")")
+        done < <(sed -n 's/.*"[Ss]team[Pp]ath"[[:space:]]*"\([^"]*\)".*/\1/p' "$hint" 2>/dev/null)
+    done
+
+    if [ ${#roots[@]} -eq 0 ]; then
+        local bin up
+        bin="$(command -v steam 2>/dev/null)"
+        if [ -n "$bin" ]; then
+            up="$(readlink -f "$bin")"
+            for _ in 1 2 3 4; do
+                up="$(dirname "$up")"
+                [ -d "$up/steamapps" ] && roots+=("$(readlink -f "$up")")
+            done
+        fi
+    fi
+
+    if [ ${#roots[@]} -eq 0 ]; then
+        local found
+        while IFS= read -r found; do
+            [ -n "$found" ] && roots+=("$(readlink -f "$(dirname "$found")")")
+        done < <(timeout 20 find "$HOME" /mnt /media /run/media /srv /opt \
+                     -maxdepth 6 -type d -name steamapps 2>/dev/null | head -20)
+    fi
+
     for root in "${roots[@]}"; do
         vdf="$root/steamapps/libraryfolders.vdf"
         [ -f "$vdf" ] || continue
@@ -58,6 +91,8 @@ steam_roots() {
             [ -n "$extra" ] && [ -d "$extra/steamapps" ] && roots+=("$(readlink -f "$extra")")
         done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
+
+    [ ${#roots[@]} -gt 0 ] || return 1
     printf '%s\n' "${roots[@]}" | awk 'NF && !seen[$0]++'
 }
 

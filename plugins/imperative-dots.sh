@@ -53,23 +53,41 @@ wallpaper_dir() {
     echo "$dir"
 }
 
+# Same escalation as the rest of the project: conventional locations, then what
+# Steam records about itself, then a bounded scan. The cached hint written by
+# `wpe` is consulted first, which makes the common path a single stat.
 workshop_dir() {
+    local c vdf extra cfg
+    local suffix="steamapps/workshop/content/$WE_APPID"
+
+    cfg="${XDG_CONFIG_HOME:-$HOME/.config}/wpe/config"
+    if [ -f "$cfg" ]; then
+        c="$(sed -n 's/^WORKSHOP_DIR="\(.*\)"$/\1/p' "$cfg" 2>/dev/null | head -1)"
+        [ -n "$c" ] && [ -d "$c" ] && { echo "$c"; return 0; }
+    fi
+
     local -a candidates=(
         "${XDG_DATA_HOME:-$HOME/.local/share}/Steam" "$HOME/.steam/steam" "$HOME/.steam/root"
         "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"
         "$HOME/snap/steam/common/.local/share/Steam"
+        "/usr/local/share/Steam"
     )
-    local c vdf extra
     for c in "${candidates[@]}"; do
-        [ -d "$c/steamapps/workshop/content/$WE_APPID" ] && {
-            echo "$c/steamapps/workshop/content/$WE_APPID"; return 0; }
+        [ -d "$c/$suffix" ] && { echo "$c/$suffix"; return 0; }
         vdf="$c/steamapps/libraryfolders.vdf"
         [ -f "$vdf" ] || continue
         while IFS= read -r extra; do
-            [ -d "$extra/steamapps/workshop/content/$WE_APPID" ] && {
-                echo "$extra/steamapps/workshop/content/$WE_APPID"; return 0; }
+            [ -d "$extra/$suffix" ] && { echo "$extra/$suffix"; return 0; }
         done < <(sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
     done
+
+    # Nothing conventional matched: look for the content folder itself, which is
+    # unambiguous — that AppID only ever means Wallpaper Engine.
+    local found
+    found="$(timeout 20 find "$HOME" /mnt /media /run/media /srv /opt \
+                 -maxdepth 8 -type d -path "*/$suffix" 2>/dev/null | head -1)"
+    [ -n "$found" ] && { echo "$found"; return 0; }
+
     return 1
 }
 
