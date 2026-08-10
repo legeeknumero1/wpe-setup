@@ -254,6 +254,14 @@ run_check() {
         info "matugen absent — la synchro des couleurs sera désactivée (optionnel)"
     fi
 
+    local plugins; plugins="$(available_plugins)"
+    if [ -n "$plugins" ]; then
+        local p
+        while IFS= read -r p; do
+            ok "Intégration disponible : $(basename "$p" .sh)"
+        done <<< "$plugins"
+    fi
+
     head1 "Verdict"
     if [ "$CHECK_BLOCKERS" -gt 0 ]; then
         bad "$CHECK_BLOCKERS prérequis critique(s) manquant(s)"
@@ -274,8 +282,27 @@ run_check() {
 backup_targets() {
     printf '%s\n' \
         "$CONFIG_DIR" \
-        "$BIN_DIR/wpe" \
-        "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/scripts/wallpaperengine.sh"
+        "$BIN_DIR/wpe"
+
+    # A plugin that will edit existing dotfiles must have those files archived
+    # too, otherwise rollback would restore only half the machine.
+    local plugin
+    while IFS= read -r plugin; do
+        "$plugin" targets 2>/dev/null
+    done < <(available_plugins)
+}
+
+plugin_dir() { echo "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/plugins"; }
+
+# Plugins that both exist and apply to this machine.
+available_plugins() {
+    local dir; dir="$(plugin_dir)"
+    [ -d "$dir" ] || return 0
+    local p
+    for p in "$dir"/*.sh; do
+        [ -x "$p" ] || continue
+        "$p" detect >/dev/null 2>&1 && echo "$p"
+    done
 }
 
 create_backup() {
@@ -402,6 +429,25 @@ EOF
         *) warn "$BIN_DIR n'est pas dans ton PATH"
            info "Ajoute : export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
     esac
+
+    local plugins; plugins="$(available_plugins)"
+    if [ -n "$plugins" ]; then
+        head1 "Intégrations détectées"
+        local p
+        while IFS= read -r p; do
+            info "$(basename "$p" .sh)"
+        done <<< "$plugins"
+        printf '\n  Les activer ? Elles intègrent tes wallpapers directement\n'
+        printf '  dans ton environnement de bureau. [O/n] '
+        local reply; read -r reply
+        case "$reply" in
+            [nN]) info "Intégrations ignorées" ;;
+            *) while IFS= read -r p; do
+                   head1 "Intégration : $(basename "$p" .sh)"
+                   "$p" install || warn "l'intégration a échoué — « wpe-setup rollback » annule tout"
+               done <<< "$plugins" ;;
+        esac
+    fi
 
     head1 "Terminé"
     info "wpe list          les wallpapers disponibles"

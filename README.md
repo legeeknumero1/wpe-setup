@@ -80,6 +80,33 @@ wpe stop            # stop rendering
 dying with nothing to restart it, and the monitor layout changing while the
 engine keeps rendering to a stale set of outputs.
 
+### Desktop integrations
+
+`install` detects supported desktop setups and offers to wire the wallpapers
+directly into them. Integrations live in `plugins/` and are entirely optional.
+
+**`imperative-dots`** — exposes every Wallpaper Engine wallpaper inside the
+Quickshell wallpaper picker, so `Super+W` lists them and selecting one hands it
+to the engine instead of pushing a still frame to `awww`. It also parallelises
+the picker's thumbnail generation, which upstream does one file at a time while
+decoding every frame of animated GIFs.
+
+Both patches are idempotent, anchored on text verified to exist first, and
+skipped with a warning if upstream has changed the file — never applied blind.
+
+Writing a plugin means one executable in `plugins/` answering four subcommands:
+
+| Subcommand | Contract |
+|---|---|
+| `detect` | exit 0 if this setup is present |
+| `targets` | list every file it will modify, one per line |
+| `install` | apply the integration, idempotently |
+| `status` | report what is currently applied |
+
+`targets` is what makes rollback complete: `wpe-setup` archives those files
+before the plugin runs, so undoing an integration restores the dotfiles it
+edited.
+
 ## 4. Threat model
 
 What this tool can do to a machine, and what constrains it.
