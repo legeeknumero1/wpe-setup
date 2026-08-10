@@ -1,2 +1,7 @@
 *.log
 *.tar.gz
+# makepkg build artefacts
+packaging/aur/pkg/
+packaging/aur/src/
+packaging/aur/wpe-setup/
+packaging/aur/*.pkg.tar.*

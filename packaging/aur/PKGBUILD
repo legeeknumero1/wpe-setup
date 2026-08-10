@@ -2,7 +2,7 @@
 
 pkgname=wpe-setup-git
 _pkgname=wpe-setup
-pkgver=r0.0000000
+pkgver=r8.a36d3d2
 pkgrel=1
 pkgdesc="Set up Wallpaper Engine wallpapers on Linux in one command, with prerequisite checks, backup and rollback"
 arch=('any')
