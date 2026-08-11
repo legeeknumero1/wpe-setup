@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Engine bug (rendering, wallpaper support, crashes)
+    url: https://github.com/Almamu/linux-wallpaperengine/issues
+    about: Rendering itself is linux-wallpaperengine's job — report those upstream.

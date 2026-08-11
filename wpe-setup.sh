@@ -703,4 +703,7 @@ main() {
     esac
 }
 
-main "$@"
+# Sourcing with WPE_SETUP_LIB=1 loads the functions without running anything,
+# which is how the test suite exercises discovery and backup logic directly
+# instead of only through the CLI.
+[ "${WPE_SETUP_LIB:-}" = "1" ] || main "$@"

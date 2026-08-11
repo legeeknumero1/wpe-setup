@@ -5,9 +5,9 @@
 **Wallpaper Engine wallpapers on Linux — one command, with a rollback that actually works.**
 
 [![CI](https://github.com/legeeknumero1/wpe-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/legeeknumero1/wpe-setup/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)](tests/run.sh)
 [![ShellCheck](https://img.shields.io/badge/shellcheck-strict-brightgreen)](https://www.shellcheck.net/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Shell](https://img.shields.io/badge/pure-bash-lightgrey)](https://www.gnu.org/software/bash/)
 
 </div>
 
@@ -281,11 +281,33 @@ Because "copy, paste, done" beats "install a toolchain first" for a setup tool. 
 
 **Residual risk.** The engine renders untrusted Workshop content — shaders, scenes, and CEF-hosted web wallpapers — with your user's privileges. That risk belongs to `linux-wallpaperengine` and Wallpaper Engine; this tool neither adds to nor reduces it. Don't subscribe to wallpapers you wouldn't run as a program.
 
+## Tests
+
+```sh
+./tests/run.sh              # 28 cases
+./tests/run.sh rollback     # only cases matching a name
+```
+
+No framework, because the project's promise is that bash and coreutils are all
+you need. Every case builds a throwaway `HOME` with a synthetic Steam tree, so
+the suite needs no Steam, no compositor and no wallpapers — and cannot touch the
+machine it runs on.
+
+Each case exists because something actually broke while building this: a corrupt
+backup that deleted files it could not restore, an empty id that passed
+validation by resolving to its parent directory, previews that outlived the
+wallpapers they belonged to. Coverage percentages are not the bar; regressions
+that already bit once are.
+
+CI runs the suite alongside ShellCheck at `-S style`, a syntax gate, a check
+that every plugin implements the full contract, and a guard that fails the build
+if a hardcoded home directory ever appears in the source.
+
 ## Contributing
 
 Tested daily on Hyprland. The other compositors are implemented from their documented interfaces but not yet exercised on real hardware — **reports from Sway, river, Wayfire, niri and X11 are especially welcome**, working or not.
 
-CI must stay green: ShellCheck at `-S style`, syntax parse, plugin contract, and no hardcoded paths.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the house rules and the plugin contract.
 
 ## Credits and licensing
 

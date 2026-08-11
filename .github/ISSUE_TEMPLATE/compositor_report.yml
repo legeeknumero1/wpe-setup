@@ -1,0 +1,32 @@
+name: Compositor report
+description: Report whether it works on a compositor other than Hyprland
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only Hyprland is tested on real hardware. Reports either way are useful —
+        a "does not work" is as valuable as a "works".
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works with caveats
+        - Does not work
+    validations:
+      required: true
+  - type: input
+    id: compositor
+    attributes:
+      label: Compositor and version
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: Details
+      description: What worked, what did not, and anything you had to change.
+    validations:
+      required: true

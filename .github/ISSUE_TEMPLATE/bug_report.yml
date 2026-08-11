@@ -1,0 +1,45 @@
+name: Bug report
+description: Something behaved differently from what the README promises
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: `wpe-setup check` prints most of what is asked below.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: compositor
+    attributes:
+      label: Compositor and version
+      placeholder: "Hyprland 0.56.1 / Sway 1.10 / X11 with i3"
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      placeholder: "CachyOS, Fedora 42, Ubuntu 24.04…"
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `wpe-setup check`
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: engine
+    attributes:
+      label: Engine log
+      description: "`~/.local/state/wpe/engine.log`, if the wallpaper failed to render."
+      render: shell
+    validations:
+      required: false
+

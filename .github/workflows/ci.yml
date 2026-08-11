@@ -19,7 +19,7 @@ jobs:
       # -S style is the strictest level: it catches stylistic issues on top of
       # correctness ones. The tree is expected to be clean at that level.
       - name: Lint every script
-        run: shellcheck -s bash -S style wpe-setup.sh lib/wpe plugins/*.sh
+        run: shellcheck -s bash -S style wpe-setup.sh lib/wpe plugins/*.sh tests/run.sh
 
   syntax:
     name: Syntax
@@ -28,9 +28,24 @@ jobs:
       - uses: actions/checkout@v5
       - name: Parse every script
         run: |
-          for f in wpe-setup.sh lib/wpe plugins/*.sh; do
+          for f in wpe-setup.sh lib/wpe plugins/*.sh tests/run.sh; do
             bash -n "$f" || exit 1
           done
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # jq is the only runtime dependency the suite cannot fake.
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Every case runs against a throwaway HOME with a synthetic Steam tree,
+      # so the suite needs no Steam, no compositor and no wallpapers.
+      - name: Run the test suite
+        run: NO_COLOR=1 ./tests/run.sh
 
   contract:
     name: Plugin contract
