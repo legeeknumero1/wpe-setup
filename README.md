@@ -56,6 +56,26 @@ That's it — you get a menu. Prefer it non-interactive?
 ./wpe-setup.sh rollback   # put everything back
 ```
 
+### Arch, CachyOS, EndeavourOS
+
+A `PKGBUILD` ships in the repository, so you can build a real pacman-managed
+package without waiting on the AUR:
+
+```sh
+git clone https://github.com/legeeknumero1/wpe-setup
+cd wpe-setup/packaging/aur && makepkg -si
+```
+
+That installs `wpe` and `wpe-setup` system-wide, resolves dependencies through
+pacman, and uninstalls cleanly with `pacman -R wpe-setup-git`. Its `check()`
+runs the same ShellCheck gate as CI, so a broken tree fails the build instead
+of reaching your system.
+
+> **Why not the AUR yet?** Arch [suspended new AUR registrations and paused all
+> pushes](https://linuxiac.com/arch-linux-blocks-new-aur-registrations-amid-malware-cleanup/)
+> during the 2026 malicious-package cleanup. The package will be submitted once
+> that lifts; `makepkg -si` above gives you the identical result meanwhile.
+
 ## What `check` looks like
 
 Sample run on one machine — the numbers are simply what was found there, not
