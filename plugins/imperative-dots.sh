@@ -7,7 +7,7 @@
 # static ones, and selecting one hands it to linux-wallpaperengine rather than
 # pushing a still frame to awww.
 #
-# Subcommands: detect | targets | install | cleanup | status
+# Subcommands: detect | targets | install | sync | cleanup | status
 #
 # Every patch is idempotent and anchored on text that is verified to exist
 # first: when an anchor is missing (upstream changed the file), that patch is
