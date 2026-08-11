@@ -11,6 +11,12 @@
 
 </div>
 
+> [!WARNING]
+> **Early development.** This works well enough to be used daily, but it is new
+> and lightly tested: expect rough edges, and read [Known issues](#known-issues)
+> before installing. `rollback` exists precisely because you may want it — it is
+> tested, and it restores files byte-for-byte.
+
 ---
 
 ## What this is
@@ -206,6 +212,35 @@ the still image as a static wallpaper instead of starting the engine.
 | `status` | report what is currently applied |
 
 Patches are idempotent and anchored on text verified to exist first. If upstream changed the file, the patch is **skipped with a warning** rather than applied blind.
+
+## Known issues
+
+Stated plainly, because finding these yourself after installing is worse than
+reading them here.
+
+**Only Hyprland is genuinely tested.** Sway, river, Wayfire, niri and X11 are
+implemented from their documented interfaces and exercised in sandboxes, but not
+on real hardware. They may simply not work. Reports either way are welcome.
+
+**Colour sync can be wrong on rare occasions.** The palette is derived from a
+frame captured shortly after the wallpaper starts. A wallpaper that opens on a
+black intro, a loading state, or a frame unrepresentative of the rest will
+produce a palette that does not match what you end up looking at. Re-running
+`wpe colors` after it has settled gives a better result.
+
+**Scene wallpapers spike on load.** Expect a brief jump to 30–50% of one core
+while a `scene` wallpaper initialises, settling to roughly 3–5%. Video
+wallpapers are lighter throughout.
+
+**Some wallpapers have their borders baked in.** If a wallpaper shows bars at
+the edges, check the source file before blaming `--scaling`: plenty of Workshop
+uploads are letterboxed in the video itself, and no scaling mode can undo that.
+
+**Plugin patches are skipped when upstream changes.** Integrations anchor on
+specific text in the files they edit. When a dotfiles project changes those
+files, the patch is skipped with a warning rather than applied blind — safe, but
+it means the integration silently does less than you expected. `status` tells
+you what actually got applied.
 
 ## FAQ
 

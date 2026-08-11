@@ -181,6 +181,12 @@ start() {
     [ -n "$ASSETS_DIR" ] && args+=(--assets-dir "$ASSETS_DIR")
     [ "$SILENT" = "1" ] && args+=(--silent)
 
+    # Drop the previous capture before starting. sync_colors waits for this file
+    # to appear, so leaving the old one in place makes that wait finish instantly
+    # and hands matugen a frame of the *previous* wallpaper — the palette then
+    # belongs to the wallpaper you just replaced.
+    rm -f "$FRAME"
+
     setsid "$engine" \
         "${args[@]}" \
         --noautomute \
