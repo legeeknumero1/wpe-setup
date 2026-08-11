@@ -9,9 +9,14 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Shell](https://img.shields.io/badge/pure-bash-lightgrey)](https://www.gnu.org/software/bash/)
 
-![Two wallpaper changes from the shell's picker: each animated background is applied and the whole colour scheme follows it](docs/demo.gif)
+</div>
 
-<sub>Two changes, straight from the desktop's own picker. Each background is a live animated wallpaper, and the palette is re-derived from a real rendered frame — watch the bar and the terminal follow it from gold, to neon blue, to orange. ([sharper mp4](docs/demo.mp4))</sub>
+https://github.com/user-attachments/assets/0c7782ad-6f9f-47c5-bdf8-e05276fff6b9
+
+<div align="center">
+
+<sub>Two changes, straight from the desktop's own picker. Each background is a live animated wallpaper, and the palette is re-derived from a real rendered frame — watch the bar and the terminal follow it from gold, to neon blue, to orange.<br>
+Video not playing? Same clip as an <a href="docs/demo.gif">animated GIF</a>.</sub>
 
 </div>
 
