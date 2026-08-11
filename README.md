@@ -9,6 +9,10 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Shell](https://img.shields.io/badge/pure-bash-lightgrey)](https://www.gnu.org/software/bash/)
 
+![Picking a Wallpaper Engine wallpaper: the animated background changes and the whole colour scheme follows](docs/demo.gif)
+
+<sub>Picking a wallpaper from the shell's own picker. The background is animated, and the palette is re-derived from a real rendered frame — so the bar and terminal follow it. ([higher quality mp4](docs/demo.mp4))</sub>
+
 </div>
 
 > [!WARNING]
