@@ -71,15 +71,41 @@ new_sandbox() {
         > "$lib/steamapps/libraryfolders.vdf"
 
     mkdir -p "$SANDBOX/.config" "$SANDBOX/.local/state" "$SANDBOX/.local/bin" "$SANDBOX/Pictures/Wallpapers"
+
+    # A stub engine, so `check` sees its prerequisite satisfied. CI runners have
+    # no linux-wallpaperengine, and without this `install` would stop at the
+    # confirmation prompt and every later assertion would fail for the wrong
+    # reason. Nothing here ever renders, so a stub is enough.
+    mkdir -p "$SANDBOX/bin"
+    printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/bin/linux-wallpaperengine"
+    chmod +x "$SANDBOX/bin/linux-wallpaperengine"
+
     echo "$SANDBOX"
 }
 
 drop_sandbox() { [ -n "$SANDBOX" ] && rm -rf "$SANDBOX"; SANDBOX=""; }
 
-# Runs wpe-setup with an isolated HOME and no inherited desktop state.
+# Runs a command against a sandbox with nothing inherited from the host: no
+# XDG_* pointing outside it, no WALLPAPER_DIR from the developer's desktop.
+# Leaking either makes a test read real files and pass or fail for reasons that
+# have nothing to do with the code.
+run_in() {
+    local home="$1"; shift
+    env -i \
+        HOME="$home" \
+        PATH="$home/bin:/usr/local/bin:/usr/bin:/bin" \
+        NO_COLOR=1 \
+        "$@"
+}
+
 setup_in() {
     local home="$1"; shift
-    env -i HOME="$home" PATH="$PATH" NO_COLOR=1 bash "$ROOT/wpe-setup.sh" "$@"
+    run_in "$home" bash "$ROOT/wpe-setup.sh" "$@"
+}
+
+plugin_in() {
+    local home="$1"; shift
+    run_in "$home" bash "$ROOT/plugins/imperative-dots.sh" "$@"
 }
 
 # Loads wpe-setup's functions without executing the CLI.
@@ -158,7 +184,7 @@ SYNC_COLORS=0
 MATUGEN_HOOK=""
 EOF
     local out
-    out="$(HOME="$home" bash "$ROOT/lib/wpe" random 2>&1)"
+    out="$(run_in "$home" bash "$ROOT/lib/wpe" random 2>&1)"
     case "$out" in
         *"no id given"*) pass "'random' on an empty library refuses the empty id" ;;
         *) fail "accepted an empty id: $out" ;;
@@ -167,7 +193,7 @@ EOF
         "leaves the stored configuration untouched"
 
     # The CLI rejects it earlier, before the function is ever reached.
-    out="$(HOME="$home" bash "$ROOT/lib/wpe" set "" 2>&1)"
+    out="$(run_in "$home" bash "$ROOT/lib/wpe" set "" 2>&1)"
     case "$out" in
         *"usage: wpe set"*) pass "'set \"\"' is caught by the argument guard" ;;
         *) fail "unexpected output from set \"\": $out" ;;
@@ -263,7 +289,7 @@ test_plugin_refuses_unknown_file() {
     local before; before="$(md5sum "$picker" | cut -d' ' -f1)"
 
     local out
-    out="$(env -u WALLPAPER_DIR HOME="$home" bash "$ROOT/plugins/imperative-dots.sh" install 2>&1)"
+    out="$(plugin_in "$home" install 2>&1)"
     case "$out" in
         *"unrecognised picker layout"*) pass "warns instead of patching blind" ;;
         *) fail "did not report an unrecognised layout" ;;
@@ -284,7 +310,7 @@ test_plugin_prunes_orphans() {
     printf 'stale\n' > "$wp/0we_999999999.jpg"     # no longer in the workshop
     printf 'mine\n'  > "$wp/my-own-wallpaper.jpg"  # belongs to the user
 
-    env -u WALLPAPER_DIR HOME="$home" bash "$ROOT/plugins/imperative-dots.sh" sync >/dev/null 2>&1
+    plugin_in "$home" sync >/dev/null 2>&1
 
     assert_absent "$wp/0we_999999999.jpg" "removes the orphaned preview"
     assert_exists "$wp/my-own-wallpaper.jpg" "never touches the user's own wallpapers"
@@ -303,9 +329,9 @@ test_plugin_idempotent() {
     printf 'x\n' > "$home/.config/hypr/scripts/qs_manager.sh"
     printf '{"wallpaperDir":"%s/Pictures/Wallpapers"}\n' "$home" > "$home/.config/hypr/settings.json"
 
-    env -u WALLPAPER_DIR HOME="$home" bash "$ROOT/plugins/imperative-dots.sh" install >/dev/null 2>&1
+    plugin_in "$home" install >/dev/null 2>&1
     local first; first="$(md5sum "$picker" | cut -d' ' -f1)"
-    env -u WALLPAPER_DIR HOME="$home" bash "$ROOT/plugins/imperative-dots.sh" install >/dev/null 2>&1
+    plugin_in "$home" install >/dev/null 2>&1
     local second; second="$(md5sum "$picker" | cut -d' ' -f1)"
 
     assert_eq "$second" "$first" "the picker is patched exactly once"
