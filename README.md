@@ -185,11 +185,23 @@ Run `install` twice then `rollback`, and you land on the state you started from.
 
 Writing a plugin means one executable answering five subcommands:
 
+Subscribed or unsubscribed something in Steam? Re-mirror the Workshop without
+touching any patched file:
+
+```sh
+/usr/share/wpe-setup/plugins/imperative-dots.sh sync
+```
+
+It adds what is new and prunes what is gone. Pruning matters: an unsubscribed
+wallpaper leaves its preview behind, and clicking that stale entry would apply
+the still image as a static wallpaper instead of starting the engine.
+
 | Subcommand | Contract |
 |---|---|
 | `detect` | exit 0 if this setup is present |
 | `targets` | list every **pre-existing** file it will modify |
 | `install` | apply the integration, idempotently |
+| `sync` | re-mirror the Workshop: add new previews, prune removed ones |
 | `cleanup` | remove the files it created, by name |
 | `status` | report what is currently applied |
 

@@ -98,14 +98,17 @@ workshop_dir() {
 # static wallpapers start with a digit, so "0" floats these to the top instead
 # of burying them. It must not be "000_", which the picker treats as a video.
 
+# Mirrors the Workshop into the picker's folder: adds what is new and removes
+# what has gone. Pruning is not optional — unsubscribing in Steam leaves the
+# preview behind, and clicking that stale entry applies the still image as a
+# static wallpaper instead of starting the engine, which looks like the tool is
+# broken. Safe to re-run at any time.
 install_previews() {
-    local ws dest n=0
+    local ws dest added=0 removed=0
     ws="$(workshop_dir)" || { p_bad "Workshop content not found"; return 1; }
     dest="$(wallpaper_dir)"
     mkdir -p "$dest" || return 1
-
     mkdir -p "$(dirname "$CREATED_MANIFEST")"
-    : > "$CREATED_MANIFEST"
 
     local d id preview ext target
     for d in "$ws"/*/; do
@@ -117,17 +120,33 @@ install_previews() {
         fi
         ext="${preview##*.}"
         target="$dest/0we_$id.$ext"
+        [ -f "$target" ] && continue
         # Real files, not symlinks: Qt's FolderListModel is not guaranteed to
         # follow links, and a picker showing nothing is impossible to diagnose.
-        if cp -L -- "$d/$preview" "$target" 2>/dev/null; then
-            printf '%s\n' "$target" >> "$CREATED_MANIFEST"
+        cp -L -- "$d/$preview" "$target" 2>/dev/null && added=$((added + 1))
+    done
+
+    # Drop previews whose wallpaper is no longer subscribed.
+    local f
+    for f in "$dest"/0we_*; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f")"; id="${id#0we_}"; id="${id%.*}"
+        if [ ! -d "$ws/$id" ]; then
+            rm -f -- "$f" && removed=$((removed + 1))
         fi
     done
 
-    # Counted from disk rather than accumulated in the loop, so the number
-    # reported is what actually landed.
-    n="$(find "$dest" -maxdepth 1 -name '0we_*' 2>/dev/null | wc -l)"
-    p_ok "$n previews exposed in $dest"
+    # Rebuilt from disk so the manifest always matches reality, whatever was
+    # added or pruned in this run or a previous one.
+    find "$dest" -maxdepth 1 -name '0we_*' 2>/dev/null | sort > "$CREATED_MANIFEST"
+
+    local total
+    total="$(wc -l < "$CREATED_MANIFEST")"
+    p_ok "$total previews in $dest (+$added, -$removed)"
+
+    # Stale thumbnails would keep pruned wallpapers listed in the picker.
+    [ "$removed" -gt 0 ] && invalidate_thumb_cache >/dev/null 2>&1
+    return 0
 }
 
 # ─── 2. Route picker selections to the engine ────────────────────────────────
@@ -377,11 +396,19 @@ plugin_cleanup() {
     p_ok "$n previews removed"
 }
 
+# Re-mirror the Workshop without touching the patched files. Meant to be run
+# after subscribing or unsubscribing in Steam.
+plugin_sync() {
+    plugin_detect || { p_bad "imperative-dots not detected"; return 1; }
+    install_previews || return 1
+}
+
 case "${1:-status}" in
     detect)  plugin_detect ;;
     targets) plugin_targets ;;
     install) plugin_install ;;
+    sync)    plugin_sync ;;
     cleanup) plugin_cleanup ;;
     status)  plugin_status ;;
-    *)       printf 'usage: %s {detect|targets|install|cleanup|status}\n' "$(basename "$0")" >&2; exit 1 ;;
+    *)       printf 'usage: %s {detect|targets|install|sync|cleanup|status}\n' "$(basename "$0")" >&2; exit 1 ;;
 esac
