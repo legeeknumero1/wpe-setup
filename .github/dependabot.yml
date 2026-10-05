@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # The scripts have no package dependencies; the workflow's actions do, and a
+  # pinned action nobody revisits is how a supply-chain advisory goes unnoticed.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    # A release younger than a week has not been vetted by anyone yet;
+    # hijacked action tags are typically caught within days.
+    cooldown:
+      default-days: 7
