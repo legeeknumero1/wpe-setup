@@ -1,0 +1,194 @@
+name: Audit
+
+# Standalone copy of nix-dotfiles/.github/workflows/audit-reusable.yml:
+# a public repository cannot call a workflow from a private one. Keep it in
+# sync with that file (same pinned nixpkgs, same checks).
+
+# Reusable full-repository audit, called by every repo's own
+# .github/workflows/audit.yml. It must stay green: a finding is fixed at
+# its cause (or, for a proven false positive, annotated on its line with
+# the reason), never silenced by weakening a check.
+#
+# Every tool comes from one pinned nixpkgs revision, so CI and a local
+# `nix run` give the same versions, verified by hash. Third-party actions
+# are pinned by commit (aquasecurity/trivy-action's tags were hijacked in
+# March 2026; no tag is trusted here).
+#
+# One job, sequential steps, each running even if an earlier one failed:
+# a single Nix install per run keeps the free Actions minutes in budget,
+# and every finding is reported at once.
+#
+# Checks, each enabled only when the repo has something to check:
+#   secrets   gitleaks over the full git history (.gitleaks.toml honoured)
+#   deps/IaC  trivy fs: fixable HIGH/CRITICAL vulnerabilities, Dockerfile /
+#             compose / k8s misconfigurations, secrets in the tree
+#   SAST      semgrep, p/default ruleset
+#   Go        per go.mod: go generate (when used), gofmt, go vet,
+#             golangci-lint, go test -race, govulncheck
+#   Rust      per Cargo.lock: cargo fmt, clippy -D warnings, cargo test,
+#             cargo audit
+#   shell     shellcheck -S warning on every sh/bash script
+#
+# Build toolchains (go, cargo) come from the repo's own flake devShell when
+# it has one (its declared versions and system libraries), else from the
+# pinned nixpkgs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1" # weekly: new CVEs appear without any push
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  NIXPKGS: github:NixOS/nixpkgs/4975466d324710c576dc11ad614684e6bd8cad8e
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Detect what to audit
+        id: detect
+        run: |
+          go_dirs=$(git ls-files '*go.mod' | xargs -r -n1 dirname | sort -u | tr '\n' ' ')
+          rust_dirs=$(git ls-files '*Cargo.lock' | xargs -r -n1 dirname | sort -u | tr '\n' ' ')
+          # Scripts by extension or by an sh/bash shebang (tracked files only).
+          shell_files=$( { git ls-files '*.sh' '*.bash'; git ls-files -z | xargs -0 -r grep -lIE '^#!.*\b(ba)?sh\b' 2>/dev/null | while read -r f; do head -n1 "$f" | grep -qE '^#!' && echo "$f"; done; } | sort -u | tr '\n' ' ')
+          devshell=false
+          if [ -f flake.nix ] && nix eval --raw ".#devShells.x86_64-linux.default.name" >/dev/null 2>&1; then devshell=true; fi
+          {
+            echo "go_dirs=$go_dirs"
+            echo "rust_dirs=$rust_dirs"
+            echo "shell_files=$shell_files"
+            echo "devshell=$devshell"
+          } >> "$GITHUB_OUTPUT"
+          echo "Go: ${go_dirs:-none} | Rust: ${rust_dirs:-none} | shell: $(echo "$shell_files" | wc -w) file(s) | devShell: $devshell"
+
+      # Step outputs reach scripts through env, never ${{ }} inside run:
+      # a crafted file name must not become shell code.
+      - name: Install the audit tools (pinned nixpkgs)
+        env:
+          GO_DIRS: ${{ steps.detect.outputs.go_dirs }}
+          RUST_DIRS: ${{ steps.detect.outputs.rust_dirs }}
+          DEVSHELL: ${{ steps.detect.outputs.devshell }}
+        run: |
+          tools="gitleaks trivy semgrep shellcheck"
+          if [ -n "$GO_DIRS" ]; then tools="$tools golangci-lint govulncheck"; fi
+          if [ -n "$RUST_DIRS" ]; then tools="$tools cargo-audit"; fi
+          if [ "$DEVSHELL" != true ]; then
+            if [ -n "$GO_DIRS" ]; then tools="$tools go"; fi
+            if [ -n "$RUST_DIRS" ]; then tools="$tools cargo rustc clippy rustfmt"; fi
+          fi
+          # shellcheck disable=SC2046 # one installable per word is intended
+          nix profile add $(for t in $tools; do printf '%s#%s ' "$NIXPKGS" "$t"; done)
+
+      - name: Secrets (gitleaks, full history)
+        if: ${{ !cancelled() }}
+        run: gitleaks git --no-banner --redact --verbose --exit-code 1 . # --redact: findings show where, never the value
+
+      - name: Dependencies, IaC and tree secrets (trivy)
+        if: ${{ !cancelled() }}
+        run: >-
+          trivy fs --quiet --no-progress --exit-code 1
+          --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --ignore-unfixed
+          --skip-dirs .git .
+
+      - name: Static analysis (semgrep)
+        if: ${{ !cancelled() }}
+        run: semgrep scan --config p/default --metrics=off --disable-version-check --error --quiet .
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: ${{ !cancelled() && steps.detect.outputs.go_dirs != '' }}
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+
+      - name: Go (gofmt, vet, golangci-lint, race tests, govulncheck)
+        if: ${{ !cancelled() && steps.detect.outputs.go_dirs != '' }}
+        env:
+          DIRS: ${{ steps.detect.outputs.go_dirs }}
+          DEVSHELL: ${{ steps.detect.outputs.devshell }}
+        run: |
+          # The devShell's environment, loaded once; its shellHook output is
+          # discarded (it would otherwise read as gofmt/cargo output).
+          if [ "$DEVSHELL" = true ]; then eval "$(nix print-dev-env "$GITHUB_WORKSPACE")" >/dev/null; fi
+          status=0
+          for d in $DIRS; do
+            echo "::group::Go module $d"
+            (
+              cd "$d"
+              # Generated code that is not committed (templ, stringer...).
+              if git grep -q '^//go:generate ' -- '*.go'; then go generate ./...; fi
+              unformatted=$(gofmt -l .)
+              if [ -n "$unformatted" ]; then echo "::error::gofmt needed in $d: $unformatted"; exit 1; fi
+              go vet ./...
+              golangci-lint run --max-issues-per-linter 0 --max-same-issues 0 ./...
+              go test -race -count=1 ./...
+              govulncheck ./...
+            ) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: ${{ !cancelled() && steps.detect.outputs.rust_dirs != '' }}
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            **/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Rust (fmt, clippy, tests, cargo audit)
+        if: ${{ !cancelled() && steps.detect.outputs.rust_dirs != '' }}
+        env:
+          DIRS: ${{ steps.detect.outputs.rust_dirs }}
+          DEVSHELL: ${{ steps.detect.outputs.devshell }}
+        run: |
+          # The devShell's environment, loaded once; its shellHook output is
+          # discarded (it would otherwise read as gofmt/cargo output).
+          if [ "$DEVSHELL" = true ]; then eval "$(nix print-dev-env "$GITHUB_WORKSPACE")" >/dev/null; fi
+          status=0
+          for d in $DIRS; do
+            echo "::group::Cargo workspace $d"
+            (
+              cd "$d"
+              cargo fmt --all -- --check
+              cargo clippy --all-targets --all-features --locked -- -D warnings
+              cargo test --all-features --locked
+              cargo audit --deny warnings
+            ) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Shell scripts (shellcheck)
+        if: ${{ !cancelled() && steps.detect.outputs.shell_files != '' }}
+        env:
+          FILES: ${{ steps.detect.outputs.shell_files }}
+        run: |
+          # shellcheck disable=SC2086 # word splitting of the file list is intended
+          shellcheck -S warning $FILES
